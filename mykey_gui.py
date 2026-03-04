@@ -49,7 +49,7 @@ class MyKeyGUI:
         self.pw_entry.configure(bg=colors["btn"], fg=colors["fg"], insertbackground=colors["fg"])
         
         # Update status label
-       ## self.status_label.config(text="🛡️ Secured by mykey | Built in 🇨🇦 ")
+        # self.status_label.config(text="🛡️ Secured by mykey | Built in 🇨🇦 ")
 
     def create_widgets(self):
         menubar = tk.Menu(self.root)
@@ -79,7 +79,7 @@ class MyKeyGUI:
         self.pw_entry.pack(pady=(0, 10), fill=tk.X, ipady=5)
 
         # Canadian Branded Status Bar
-        # We use a standard font that usually handles basic symbols better
+        
         try:
             status_text = "🛡️ Secured by mykey | Built in 🇨🇦 Canada"
             # Test if the current environment can handle the flag
@@ -88,7 +88,7 @@ class MyKeyGUI:
             # so we manually set it to a safe version.
             safe_status = "🛡️ Secured by mykey | Built in [CAN] Canada"
         except UnicodeEncodeError:
-            # This is actually what we want! It means emojis ARE present.
+        
             safe_status = "🛡️ Secured by mykey | Built in 🇨🇦 Canada"
 
         self.status_label = tk.Label(
