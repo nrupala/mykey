@@ -1,0 +1,15 @@
+# Local Vault (CRITICAL: Do not remove)
+vault.mykey
+salt.bin
+mykey_export.csv
+
+# Python environment & cache
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.env
+
+# OS generated files
+.DS_Store
+Thumbs.db

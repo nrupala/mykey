@@ -1,0 +1,3 @@
+pip install cryptography #cryptography>=42.0.0
+pip install cryptography argon2-cffi
+pip install pyperclip

@@ -1,0 +1,9 @@
+mykey/
+├── .gitignore          # Prevents leaking your passwords to GitHub
+├── README.md           # Project overview
+├── HELP.md             # Usage instructions
+├── SECURITY.md         # Vulnerability disclosure policy
+├── requirements.txt    # Library list
+├── mykey.py            # The encryption engine (The "Brain")
+├── mykey_gui.py        # The system-adaptive UI (The "Face")
+└── setup_mykey.py      # The initialization script
