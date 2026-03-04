@@ -30,7 +30,7 @@ pip install cryptography argon2-cffi pyperclip
 # Run
 python mykey_gui.py
 
-Use code with caution.
+
 🚀 Usage
     Launch: Run python mykey_gui.py.
     Authenticate: Enter your Master Password. (Note: If you lose this and your recovery key, the data is gone forever).
