@@ -39,4 +39,4 @@ Use code with caution.
 
 # Security Policy
 If you find a vulnerability, please do not open a public issue. 
-Email the maintainer directly at [your-email] to ensure a coordinated fix.
+Email the maintainer directly at [nrupalakolkar@gmail.com] to ensure a coordinated fix.
