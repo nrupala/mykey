@@ -1,7 +1,7 @@
 import secrets
 
 # A small sample of the BIP-39 wordlist (20 words for demo)
-# In a full app, you'd use the official 2048-word list
+
 WORDLIST = [
     "abandon", "ability", "able", "about", "above", "absent", "absorb", "abstract", 
     "absurd", "abuse", "access", "accident", "account", "accuse", "achieve", "acid", 
