@@ -15,20 +15,17 @@ mykey is a stateless, local-first password generator and vault. It ensures that 
     
 🛠️ Installation
 ```bash
-# Clone and Setup
-git clone https://g
+git clone https://github.com/nrupala/mykey
 cd mykey
-python setup_mykey.
+pip install -r requirements.txt
 python mykey_gui.py
+```
 
-# Clone the repository
-git clone https://github.com
-cd mykey
+Or install dependencies directly:
 
-# Install dependencies
+```bash
 pip install cryptography argon2-cffi pyperclip
-# Run
-python mykey_gui.py
+```
 
 
 🚀 Usage
