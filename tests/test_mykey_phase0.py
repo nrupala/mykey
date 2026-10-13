@@ -92,7 +92,8 @@ def test_wrong_password_save_does_not_wipe_vault(vault_path):
 
 def test_missing_vault_is_empty_not_an_error_string(vault_path):
     app = MyKey(CORRECT, vault_file=vault_path)
-    assert app.unlock() == {}
+    # Vault v2: unlock() returns the entry list (Phase 0 returned the raw dict).
+    assert app.unlock() == []
     with pytest.raises(KeyError):
         app.get_password("nope")
 

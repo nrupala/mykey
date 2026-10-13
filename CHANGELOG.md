@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Phase 1: Vault v2
+- Envelope encryption (Vault v2): random 256-bit vault key, AES-256-GCM,
+  header stores format version + KDF parameters + wrapped-key slots.
+  Master-password and recovery slots wrap the same vault key; rotating
+  an unlock method re-wraps, never re-encrypts the vault.
+- Migration: v1 vaults (original and Phase 0 verifier variants) open
+  normally and migrate to v2 on first save; the pre-migration file is
+  kept as the rolling backup.
+- Entries are records (service, username, password, url, notes,
+  totp_secret, tags, created/updated, favourite) with full CRUD + search
+  in the engine and CLI; the GUI gains manual add of an existing
+  password, edit, delete and a searchable vault list.
+- Real BIP-39 recovery: full 2048-word list with checksum, 128-bit
+  minimum entropy, the phrase unwraps the vault key and actually
+  unlocks; rotation and master-password change supported; a verify-back
+  step at setup (CLI and GUI).
+- Importers with preview/dedupe/conflict policies: Chromium browsers
+  (Chrome/Edge/Brave/Opera/Vivaldi/Arc), Firefox, Safari/iCloud,
+  Google Password Manager, Bitwarden (CSV + JSON), 1Password CSV,
+  LastPass, Dashlane, KeePass/KeePassXC (CSV + XML), NordPass,
+  Proton Pass, and a generic CSV mapper — each covered by fixture tests.
+- TOTP code generation (RFC 6238) for entries with a TOTP secret.
+- Brand neutrality: all brand strings live in `brand.py`; a test proves
+  a vault created under one brand configuration opens under another.
+- Licence headers aligned to the Apache 2.0 + Proprietary split
+  (see LICENSING.md, including the patent section).
+
 ### Fixed — Phase 0 safety hardening
 - **Vault wipe on wrong-password save (critical):** saving with a wrong
   master password silently reset the vault to a single entry, destroying

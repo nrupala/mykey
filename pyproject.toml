@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mykey"
-version = "1.0.1"
+version = "2.0.0"
 description = "A zero-trust password manager. A NIST/CISA Compliant Canadian Vault"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -20,7 +20,10 @@ dependencies = [
 dev = ["pytest>=8"]
 
 [tool.setuptools]
-py-modules = ["mykey", "mykey_cli", "mykey_gui", "recovery", "first_run", "setup_mykey"]
+py-modules = ["mykey", "mykey_cli", "mykey_gui", "recovery", "importers", "totp", "brand", "first_run", "setup_mykey"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.setuptools.data-files]
+"share/mykey" = ["bip39_english.txt"]
