@@ -11,6 +11,16 @@ Implementation: `agents.py` + the Vault v3 engine in `mykey.py`
 (proprietary core); surfaces in `mykey_cli.py` and `mykey_mcp.py`
 (Apache 2.0 interface layer). See `LICENSING.md` for the licence map.
 
+> **Passkeys are outside agent access entirely (passkey wave).**
+> Passkey entries (kind `"passkey"`) are excluded from every
+> bundle's targets and service maps, and their per-entry key
+> (DEK_passkey) is never bundled — an agent cannot list-target,
+> read, or use a passkey, at any scope. Agent *use* of passkeys
+> (an agent presenting an assertion on the human's behalf) is a
+> later, separately gated design: it will need its own scoping,
+> per-use human approval, and audit treatment, and it is **not
+> built**. See `PASSKEYS.md`.
+
 ## The five surfaces in MyKey
 
 | Mode | Surface | Who uses it |

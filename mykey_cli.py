@@ -45,6 +45,8 @@ def _fmt_expires(expires_at):
 def _print_entry(e, status=None):
     line = (f"- {e['service']}  user={e['username'] or '-'}  url={e['url'] or '-'}"
             f"{'  ★' if e['favourite'] else ''}")
+    if e.get("kind") == "passkey":
+        line += "  [passkey]"
     if status is not None:
         if status["state"] == "overdue":
             line += "  ⚠️ password change overdue"
@@ -290,6 +292,9 @@ def main():
         "ext-set-vault", "ext-set", "ext-host-install",
         # Licensing wave: free-tier status + licence key activation.
         "licence", "licence-activate",
+        # Passkey wave: read-only listing (passkeys are created and
+        # used on the phone app; the desktop shows and deletes).
+        "passkeys",
     ])
     p.add_argument("--agent-id", help="Agent id (agent-enroll/-revoke/...)")
     p.add_argument("--scopes", default="",
@@ -1125,10 +1130,29 @@ def main():
             if not args.service:
                 print("❌ --service required", file=sys.stderr); return 2
             e = app.get_entry(args.service, args.username or None)
-            # Explicit user-requested display of their own credential
-            # on their own terminal; the purpose of the 'get' action.
-            # codeql[py/clear-text-logging-sensitive-data]
-            print(f"🔑 {e['service']} ({e['username']}): {e['password']}")
+            if e.get("kind") == "passkey":
+                # A passkey has no password to show and its private
+                # key is never printed. Show the public facts only.
+                rec = e["passkey"] or {}
+                print(f"🔑 {e['service']} ({e['username']}): passkey "
+                      f"(sign-ins: {rec.get('sign_count', 0)}). "
+                      "Use it from the phone app; it has no password.")
+            else:
+                # Explicit user-requested display of their own credential
+                # on their own terminal; the purpose of the 'get' action.
+                # codeql[py/clear-text-logging-sensitive-data]
+                print(f"🔑 {e['service']} ({e['username']}): {e['password']}")
+        elif args.action == "passkeys":
+            keys = app.list_passkeys()
+            for e in keys:
+                rec = e["passkey"] or {}
+                created = rec.get("created_at", e["created"])
+                when = time.strftime("%Y-%m-%d", time.localtime(created))
+                print(f"- {rec.get('rp_id', e['service'])}  "
+                      f"user={rec.get('user_name', e['username']) or '-'}  "
+                      f"created={when}  sign-ins={rec.get('sign_count', 0)}")
+            print(f"({len(keys)} passkeys — created and used in the "
+                  "phone app; delete here with 'delete')")
         elif args.action == "list":
             entries = app.list_entries()
             default = app.vault_settings()["default_rotate_days"]

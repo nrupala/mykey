@@ -189,11 +189,17 @@ class MyKeyGUI:
         self.listbox.delete(0, tk.END)
         for e in entries:
             label = e["service"] + (f" ({e['username']})" if e["username"] else "")
-            state = rotation_status(e, default)["state"]
-            if state == "overdue":
-                label += "  ⚠️ change overdue"
-            elif state == "due_soon":
-                label += "  ⏰ change due"
+            if e.get("kind") == "passkey":
+                # Read-only on desktop in v1: passkeys are created
+                # and used in the phone app (see PASSKEYS.md). A
+                # passkey has no password, so no rotation state.
+                label += "  [passkey — use the phone app]"
+            else:
+                state = rotation_status(e, default)["state"]
+                if state == "overdue":
+                    label += "  ⚠️ change overdue"
+                elif state == "due_soon":
+                    label += "  ⏰ change due"
             self.listbox.insert(tk.END, label)
         due = self.app.rotation_due_count()
         self.rotation_count_label.config(
