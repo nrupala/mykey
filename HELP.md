@@ -11,4 +11,4 @@
 ---
 ## Step 3: Security Hygiene
 - Use the **Copy** button to avoid typing.
-- The clipboard will self-destruct in **60 seconds**.
+- Copied passwords clear themselves after **1 minute** (you can choose 1–5 minutes under Settings → Clipboard clear delay). If you copy something else first, that is left alone — only what MyKey put there is cleared.

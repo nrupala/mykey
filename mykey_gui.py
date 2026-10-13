@@ -27,14 +27,15 @@ Phase 1 additions over the original GUI:
 * recovery-phrase setup from the menu.
 """
 
-import threading
-import time
 import tkinter as tk
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
-import pyperclip
-
 import brand
+from clipboard_guard import (
+    ClipboardGuard,
+    load_clipboard_clear_seconds,
+    save_clipboard_clear_seconds,
+)
 from mykey import MyKey, make_entry, rotation_line, rotation_status
 
 
@@ -58,8 +59,18 @@ class MyKeyGUI:
             return
         self.current_pw_value = ""
         self.is_masked = True
+        # Copied secrets clear themselves (clipboard_guard.py holds
+        # the rule and its hard bounds); closing the window is this
+        # app's lock, so it clears a pending copied secret at once.
+        self.clipboard = ClipboardGuard(
+            clear_seconds=load_clipboard_clear_seconds())
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self.create_widgets()
         self.refresh_list()
+
+    def _on_close(self):
+        self.clipboard.clear_now()
+        self.root.destroy()
 
     # -- layout ---------------------------------------------------------
     def create_widgets(self):
@@ -84,6 +95,10 @@ class MyKeyGUI:
                               command=self.do_backup_export)
         sync_menu.add_command(label="Import backup package…",
                               command=self.do_backup_import)
+        settings_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Settings", menu=settings_menu)
+        settings_menu.add_command(label="Clipboard clear delay…",
+                                  command=self.do_clipboard_delay)
         about_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="About", menu=about_menu)
         about_menu.add_command(label="Project Details", command=self.show_about)
@@ -182,16 +197,28 @@ class MyKeyGUI:
         value = self.fields["password"].get() or self.current_pw_value
         if value:
             self.current_pw_value = value
-            pyperclip.copy(value)
-            threading.Thread(target=self._wipe, args=(value,), daemon=True).start()
+            try:
+                self.clipboard.copy(value)
+            except Exception as exc:
+                messagebox.showerror(brand.PRODUCT_NAME,
+                                     f"Copy failed: {exc}")
 
-    def _wipe(self, value):
-        time.sleep(60)
-        try:
-            if pyperclip.paste() == value:  # only clear what we put there
-                pyperclip.copy("")
-        except Exception:
-            pass
+    def do_clipboard_delay(self):
+        """Settings: how long a copied password stays on the clipboard.
+
+        Bounded by the product rule (60–300 seconds) — the dialog
+        restricts the range and clipboard_guard clamps on save.
+        """
+        seconds = simpledialog.askinteger(
+            "Clipboard clear delay",
+            "Clear copied passwords after how many seconds?\n"
+            "(Shortest 60, longest 300. Default is 60.)",
+            initialvalue=self.clipboard.clear_seconds,
+            minvalue=60, maxvalue=300, parent=self.root)
+        if seconds is None:
+            return
+        self.clipboard.set_clear_seconds(seconds)
+        save_clipboard_clear_seconds(self.clipboard.clear_seconds)
 
     # -- actions ------------------------------------------------------------
     def do_save_typed(self):
