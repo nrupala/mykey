@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Blob wave: two-factor backup packages + key-value pairing
+- **MKBAK v2 — two-factor recovery.** New backup packages wrap
+  the recovery slot twice: sealed to the recovery-phrase key as
+  before, then encrypted under a key derived from a **backup
+  code** (8 words, 88 bits, Argon2id-hardened) that is generated
+  at export, shown once, and never stored anywhere. Opening a v2
+  package outside the app needs the phrase AND the code; either
+  alone fails, a wrong code fails closed. Legacy v1 packages
+  still import with the phrase alone and are labelled LEGACY at
+  inspect and import time. CLI `backup-export` prints the code
+  once; `backup-import` prompts for it on the recovery path; the
+  GUI shows it in a one-time dialog and offers package import
+  from the Sync & Backup menu.
+- **Key-value pairing for cloud storage and export targets.** A
+  pairing registry inside the encrypted vault (target id →
+  type, X25519 public key, scopes `push`/`pull`/`export`,
+  expiry, enabled) decides which outside targets receive blobs.
+  Targets present a pairing payload (public key + fingerprint);
+  a human compares the fingerprint and enrolls it. Backup exports
+  seal a content-key copy to every active pairing holding the
+  `export` scope — unpaired, disabled, expired or revoked
+  targets get no slot. A sync folder can be bound to a pairing
+  target (`sync-configure --target`); pushes and pulls then
+  require the pairing to be active with the matching scope,
+  checked against pins refreshed from the registry at human
+  unlock (the device-signer pin pattern). CLI: `pairing-keygen`,
+  `pairing-payload`, `pair-enroll`, `pairings`, `pair-revoke`,
+  `pair-disable`, `pair-enable`. Design and limits:
+  `SYNC_BACKUP.md` §9–§10.
+- Repaired `SYNC_BACKUP.md`: the file on main had been truncated
+  mid-§3.4 in the Phase 3A push (a literal truncation marker was
+  committed as its last line, and no intact copy survived in any
+  working tree). The missing sections are rewritten from the
+  shipped code and re-verified against it.
+
 ### Added — Phase 3A: user-cloud sync + device-key backup packages
 - **Sync through your own cloud folder.** A provider-neutral sync
   layer (folder provider shipped; no OAuth cloud APIs) moves the

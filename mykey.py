@@ -312,6 +312,10 @@ class MyKey:
         # live only inside the encrypted core, like the agent registry.
         self._devices = {}
         self._backup_recovery_pub = None
+        # Blob wave: pairing registry (target id -> public pairing
+        # record) for cloud-storage / export targets. Same home as
+        # the device registry: public material only, inside the core.
+        self._pairings = {}
         # "human" once unlocked by master/recovery; "agent:<id>" for an
         # agent session. Human-only operations check this.
         self._principal = None
@@ -450,6 +454,7 @@ class MyKey:
             "retired_pending_keys": self._retired_pending_keys,
             "audit_mac_since": self._audit_mac_since,
             "devices": self._devices,
+            "pairings": self._pairings,
             "backup_recovery_pub": (
                 _b64e(self._backup_recovery_pub)
                 if self._backup_recovery_pub else None),
@@ -577,6 +582,8 @@ class MyKey:
         self._audit_mac_since = int(core.get("audit_mac_since") or 0)
         # Phase 3A fields; absent in cores written before 3A.
         self._devices = core.get("devices") or {}
+        # Blob-wave field; absent in cores written before it.
+        self._pairings = core.get("pairings") or {}
         raw_pub = core.get("backup_recovery_pub")
         self._backup_recovery_pub = _b64d(raw_pub) if raw_pub else None
 
@@ -904,6 +911,7 @@ class MyKey:
         self._retired_pending_keys = {}
         self._entry_hashes = {}
         self._devices = {}
+        self._pairings = {}
         self._backup_recovery_pub = None
         self._migrated_from = from_version
         self._principal = "human"
@@ -1401,6 +1409,7 @@ class MyKey:
         inst._anchor_recovery = False
         inst._raw_pending = {}
         inst._devices = {}
+        inst._pairings = {}
         inst._backup_recovery_pub = None
         inst._principal = None
         if len(new_master_password) < MIN_MASTER_PASSWORD_LENGTH:
