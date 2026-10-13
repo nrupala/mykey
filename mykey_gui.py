@@ -27,9 +27,12 @@ Phase 1 additions over the original GUI:
 * recovery-phrase setup from the menu.
 """
 
+import os
+import re
 import threading
 import time
 import tkinter as tk
+import webbrowser
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
 import pyperclip
@@ -84,9 +87,18 @@ class MyKeyGUI:
                               command=self.do_backup_export)
         sync_menu.add_command(label="Import backup package…",
                               command=self.do_backup_import)
+        help_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Help", menu=help_menu)
+        help_menu.add_command(label="How MyKey works…",
+                              command=lambda: self.show_help_doc(
+                                  "HELP.md", f"How {brand.PRODUCT_NAME} works"))
+        help_menu.add_command(label="Common questions…",
+                              command=lambda: self.show_help_doc(
+                                  "FAQ.md", "Common questions"))
         about_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="About", menu=about_menu)
-        about_menu.add_command(label="Project Details", command=self.show_about)
+        about_menu.add_command(label=f"About {brand.PRODUCT_NAME}",
+                               command=self.show_about)
 
         main = ttk.Frame(self.root, padding="14")
         main.pack(fill=tk.BOTH, expand=True)
@@ -510,13 +522,126 @@ class MyKeyGUI:
             "restored vault.",
         )
 
+    # -- Help & About (in-app, fully offline: the text ships with
+    # the app as HELP.md / FAQ.md beside this file — the same files
+    # the repo carries as docs, mirrored byte-for-byte in the
+    # phone / web app) --------------------------------------------
+
+    def _app_dir(self):
+        return os.path.dirname(os.path.abspath(__file__))
+
+    def _app_version(self):
+        try:
+            from importlib.metadata import version
+
+            return version("mykey")
+        except Exception:
+            pass
+        try:
+            with open(os.path.join(self._app_dir(), "pyproject.toml"),
+                      encoding="utf-8") as fh:
+                for line in fh:
+                    if line.startswith("version"):
+                        return line.split("=", 1)[1].strip().strip('"')
+        except Exception:
+            pass
+        return "unknown"
+
+    @staticmethod
+    def _markdown_to_text(markdown):
+        """Render the small markdown subset HELP.md/FAQ.md use
+        (headings, bullets, **bold**) as readable plain text."""
+        text = re.sub(r"<!--.*?-->", "", markdown, flags=re.DOTALL)
+        out = []
+        for raw in text.splitlines():
+            line = raw.rstrip()
+            stripped = line.strip()
+            if stripped.startswith("### "):
+                out += ["", stripped[4:], ""]
+            elif stripped.startswith("## "):
+                out += ["", stripped[3:], ""]
+            elif stripped.startswith("# "):
+                out += [stripped[2:], ""]
+            elif stripped.startswith("- "):
+                out.append("• " + stripped[2:])
+            else:
+                out.append(stripped)
+        return "\n".join(out).replace("**", "").strip() + "\n"
+
+    def _text_dialog(self, title, width=580, height=660):
+        win = tk.Toplevel(self.root)
+        win.title(title)
+        win.geometry(f"{width}x{height}")
+        frame = ttk.Frame(win, padding="12")
+        frame.pack(fill=tk.BOTH, expand=True)
+        text = tk.Text(frame, wrap=tk.WORD, font=("Arial", 11))
+        scroll = ttk.Scrollbar(frame, orient="vertical",
+                               command=text.yview)
+        text.configure(yscrollcommand=scroll.set)
+        text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        ttk.Button(win, text="Close",
+                   command=win.destroy).pack(pady=(0, 10))
+        return win, text
+
+    def show_help_doc(self, filename, title):
+        path = os.path.join(self._app_dir(), filename)
+        try:
+            with open(path, encoding="utf-8") as fh:
+                body = self._markdown_to_text(fh.read())
+        except OSError:
+            messagebox.showerror(
+                brand.PRODUCT_NAME,
+                f"The help file {filename} is missing from this "
+                "install. It ships with the app — reinstalling "
+                "restores it.",
+            )
+            return
+        _win, text = self._text_dialog(title)
+        text.insert("1.0", body)
+        text.configure(state=tk.DISABLED)
+
+    def _about_licence_block(self, text):
+        """Licence / tip-jar block for the About dialog.
+
+        FREE-TIER SLOT: intentionally empty until the owner rules
+        on the free-tier + tip question. When it lands, the block
+        renders here — nothing else in About needs to change.
+        """
+        return None
+
     def show_about(self):
-        messagebox.showinfo(
-            f"About {brand.PRODUCT_NAME}",
-            f"{brand.PRODUCT_NAME} — {brand.PRODUCT_TAGLINE}\n"
-            f"Built in Canada · {brand.DOMAIN}\n"
-            f"Support: {brand.SUPPORT_EMAIL}\n\n{brand.ATTRIBUTION}",
-        )
+        win, text = self._text_dialog(
+            f"About {brand.PRODUCT_NAME}", width=520, height=560)
+        text.tag_configure("link", foreground="#0b5cad", underline=True)
+        for label, url in (("owner-link", "https://nrupalakolkar.com"),
+                           ("muse-link", "https://muse.ai/join")):
+            text.tag_bind(label, "<Button-1>",
+                          lambda _e, u=url: webbrowser.open(u))
+            text.tag_bind(label, "<Enter>",
+                          lambda _e: win.configure(cursor="hand2"))
+            text.tag_bind(label, "<Leave>",
+                          lambda _e: win.configure(cursor=""))
+
+        text.insert("1.0", f"{brand.PRODUCT_NAME} — {brand.PRODUCT_TAGLINE}\n"
+                           f"Version {self._app_version()}\n\n"
+                           f"Sold by {brand.VENDOR_NAME} · {brand.DOMAIN}\n"
+                           f"Support: {brand.SUPPORT_EMAIL}\n\n")
+        text.insert(tk.END, "Owned by ")
+        text.insert(tk.END, "Nrupal Akolkar", "owner-link")
+        text.insert(tk.END, " · Built with ")
+        text.insert(tk.END, "Muse by Meta", "muse-link")
+        text.insert(tk.END,
+                    " — join Muse, then redeem code 101EEK in Settings "
+                    "within 48 hours of joining and we both earn tokens.\n\n"
+                    "Licence: the MyKey core is proprietary software of "
+                    f"{brand.VENDOR_NAME}; the interface layer is "
+                    "Apache 2.0. The full licence map is LICENSING.md "
+                    "in the app folder.\n\n"
+                    "What is in this version: see CHANGELOG.md in the "
+                    "app folder.\n")
+        self._about_licence_block(text)
+        text.configure(state=tk.DISABLED)
 
 
 if __name__ == "__main__":

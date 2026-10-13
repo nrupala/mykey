@@ -69,6 +69,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   falls back to the entry's creation time, or shows "date not
   recorded" when no creation time exists.
 
+### Added — In-app help, FAQ and About
+- **Built-in help, fully offline.** `HELP.md` ("How MyKey works")
+  and `FAQ.md` ("Common questions") are the canonical help text in
+  plain words — vault, master password, recovery words, fingerprint
+  unlock, sign-in codes, password dates, clipboard clearing, sync,
+  two-factor backup packages, pairing, agents, skins. The GUI
+  shows both from a new **Help** menu; the phone / web app mirrors
+  the same files byte-for-byte, enforced in its CI. The old
+  three-step `HELP.md` stub is replaced.
+- **About dialog.** Name, version, seller (2351485 ALBERTA INC.),
+  support address, the linked attribution line with the Muse
+  referral code, a licence summary pointing at `LICENSING.md`,
+  and a changelog pointer. A marked slot waits for the licence /
+  tip block if the free-tier ruling lands.
+
 ### Added — Phase 3A: user-cloud sync + device-key backup packages
 - **Sync through your own cloud folder.** A provider-neutral sync
   layer (folder provider shipped; no OAuth cloud APIs) moves the
