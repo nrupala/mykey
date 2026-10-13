@@ -37,3 +37,10 @@ VENDOR_NAME = os.environ.get("MYKEY_VENDOR_NAME", "2351485 ALBERTA INC.")
 ATTRIBUTION = os.environ.get(
     "MYKEY_ATTRIBUTION", "Owned by Nrupal Akolkar · Built with Muse by Meta"
 )
+# Licence purchase + tip destinations. These are configuration,
+# not a checkout: the product site behind them is a separate piece
+# and the apps only ever link to these constants.
+LICENCE_BUY_URL = os.environ.get(
+    "MYKEY_LICENCE_BUY_URL", f"https://{DOMAIN}/buy"
+)
+TIP_URL = os.environ.get("MYKEY_TIP_URL", f"https://{DOMAIN}/tip")

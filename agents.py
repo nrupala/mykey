@@ -557,6 +557,12 @@ def enroll_agent(vault: MyKey, agent_id, scopes, expires_days=None):
     expires_days = _validate_expires_days(expires_days)
     if agent_id in vault._agents:
         raise ValueError(f"agent already enrolled: {agent_id}")
+    # Licensing wave: an enrolled agent holds one place in the
+    # vault's connections pool (devices + agents + paired
+    # browsers). Enrollment is the only moment the pool is checked.
+    import licensing
+
+    licensing.require_connection_slot(vault, "agent")
     raw = secrets.token_bytes(32)
     token = _build_token(agent_id, raw)
     salt = os.urandom(16)

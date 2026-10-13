@@ -45,6 +45,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CLI output is forced to UTF-8 at startup: Windows legacy code
   pages cannot encode the CLI's status glyphs (🔑/✅/❌) and
   crashed commands mid-print (e.g. `agent-get` on a cp1252 pipe).
+### Added — Licensing: free tier + signed licence keys
+- **Free tier, counted fairly.** The free version holds up to 50
+  passwords per vault and 4 connections (enrolled devices +
+  authorized agents + paired browsers, one shared pool per vault).
+  Only the counts are limited — encryption, sync, two-factor
+  backups, pairing, rotation and export are never gated.
+- **Signed licence keys.** A one-time licence (`MKLIC1.` token,
+  Ed25519-signed by the MyKey Licence Authority GPG key) verifies
+  fully offline and unlocks unlimited passwords + the connection
+  pool stated in the key (20 standard). Stored inside the vault's
+  encrypted settings (travels with the vault) and in a device
+  slot (new vaults on the device start licensed). Each licence
+  carries a recovery passcode; lost keys are re-issued by email
+  after an identity check (see `LICENCE.md`).
+- **Grandfather rule.** A vault already over a limit opens, reads,
+  edits, syncs and exports fully — only adding pauses until a
+  licence is entered or room is made. Imports fill to the limit
+  and report exactly how many were held back; agent inserts over
+  the cap stay queued with a licence-denied audit record.
+- CLI `licence` / `licence-activate`; GUI About menu gains
+  "Enter licence key…", "Buy a licence" and "Tip jar". Issuer
+  tooling (admin only): `tools/issue_licence.py`.
+
 
 ### Fixed — expiry validation for agents and pairings (issue #12)
 - `agent-enroll --expires-days 0` no longer silently creates a
@@ -61,6 +84,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   silently-dead pairing), and it now refuses 0/negatives with the
   same plain error; `pair-enroll` output echoes the expiry too.
   Regression suite: `tests/test_expires_days.py`.
+
 
 ### Changed — clipboard self-clear rule (owner directive, 2026-10-13)
 - Copied passwords now clear through one guarded path
@@ -148,6 +172,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   referral code, a licence summary pointing at `LICENSING.md`,
   and a changelog pointer. A marked slot waits for the licence /
   tip block if the free-tier ruling lands.
+
 
 ### Added — Phase 3A: user-cloud sync + device-key backup packages
 - **Sync through your own cloud folder.** A provider-neutral sync

@@ -62,6 +62,8 @@ from cryptography.hazmat.primitives.serialization import (
 
 from mykey import MyKey, MyKeyError, _b64d, _b64e
 
+import licensing
+
 DEVICE_KEYS_ENV = "MYKEY_DEVICE_KEYS"
 _KEYFILE_FORMAT = "MKDEVKEYS"
 _CARD_FORMAT = "MKDEV"
@@ -280,6 +282,10 @@ def enroll_device(vault: MyKey, card) -> dict:
                 "this device id was revoked and can never be re-enrolled; "
                 "the device must generate a fresh identity (device-init)")
         raise DeviceError(f"device already enrolled: {device_id}")
+    # Licensing wave: an enrolled device holds one place in the
+    # vault's connections pool (devices + agents + paired
+    # browsers). Enrollment is the only moment the pool is checked.
+    licensing.require_connection_slot(vault, "device")
     record["enrolled_at"] = _now()
     record["revoked_at"] = None
     vault._devices[device_id] = record
