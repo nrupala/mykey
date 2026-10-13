@@ -31,7 +31,7 @@ PRODUCT_TAGLINE = os.environ.get(
     "MYKEY_PRODUCT_TAGLINE", "Zero-Trust Password Manager"
 )
 DOMAIN = os.environ.get("MYKEY_DOMAIN", "usemykey.com")
-SUPPORT_EMAIL = os.environ.get("MYKEY_SUPPORT_EMAIL", "info@pipavia.com")
+SUPPORT_EMAIL = os.environ.get("MYKEY_SUPPORT_EMAIL", "info@aimlds.org")
 APP_ID = os.environ.get("MYKEY_APP_ID", "com.usemykey.mykey")
 VENDOR_NAME = os.environ.get("MYKEY_VENDOR_NAME", "2351485 ALBERTA INC.")
 ATTRIBUTION = os.environ.get(
