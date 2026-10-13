@@ -159,6 +159,13 @@ class MyKey:
         self._entries = None
         self._slots = None
         self._legacy = False
+        # Phase 2A: agent registry + audit head live inside the
+        # encrypted payload (tamper-evident, never plaintext on disk).
+        self._agents = {}
+        self._audit_head = ""
+        # "human" once unlocked by master/recovery; "agent:<id>" for an
+        # agent session. Human-only operations check this.
+        self._principal = None
 
     # -- KDF ------------------------------------------------------------
     def _derive_key(self, salt, algo, params=None):
@@ -273,7 +280,11 @@ class MyKey:
     def _persist(self):
         """Encrypt the in-memory entries under the vault key and write v2."""
         nonce = os.urandom(12)
-        plaintext = json.dumps({"entries": self._entries}).encode()
+        plaintext = json.dumps({
+            "entries": self._entries,
+            "agents": self._agents,
+            "audit_head": self._audit_head,
+        }).encode()
         ct = AESGCM(self._vault_key).encrypt(nonce, plaintext, _FORMAT_TOKEN.encode())
         payload = {
             "format": _FORMAT_TOKEN,
@@ -293,6 +304,8 @@ class MyKey:
                 _b64d(data["nonce"]), _b64d(data["ciphertext"]), _FORMAT_TOKEN.encode()
             )
             parsed = json.loads(plaintext)
+            self._agents = parsed.get("agents") or {}
+            self._audit_head = parsed.get("audit_head") or ""
             return [_normalize_entry(e) for e in parsed["entries"]]
         except Exception as exc:
             raise VaultCorrupt("vault contents failed to decrypt") from exc
@@ -312,6 +325,7 @@ class MyKey:
         self._slots = slots
         self._entries = self._decrypt_v2_contents(data)
         self._legacy = False
+        self._principal = "human"
         return self._entries
 
     def _unlock_legacy(self, data):
@@ -348,6 +362,9 @@ class MyKey:
             make_entry(service=name, password=pw) for name, pw in raw.items()
         ]
         self._legacy = True
+        self._agents = {}
+        self._audit_head = ""
+        self._principal = "human"
         return self._entries
 
     # -- unlock --------------------------------------------------------------
@@ -366,6 +383,9 @@ class MyKey:
             self._slots = [self._master_slot()]
             self._entries = []
             self._legacy = False
+            self._agents = {}
+            self._audit_head = ""
+            self._principal = "human"
             return self._entries
         if data.get("format") == _FORMAT_TOKEN and data.get("version") == _FORMAT_VERSION:
             return self._unlock_v2(data)
@@ -439,6 +459,7 @@ class MyKey:
         return dict(record)
 
     def delete_entry(self, service, username=None):
+        self._require_human("delete entries")
         idx = self._find_index(service, username)
         if idx < 0:
             raise KeyError(f"no entry for service: {service}")
@@ -467,6 +488,7 @@ class MyKey:
         """Create a BIP-39 recovery slot. Returns the phrase (show once)."""
         from recovery import derive_recovery_key, generate_mnemonic
 
+        self._require_human("manage recovery")
         self._require_unlocked()
         phrase = generate_mnemonic(strength)
         self._set_recovery_slot(phrase, derive_recovery_key)
@@ -507,7 +529,57 @@ class MyKey:
         self._slots = data["slots"]
         self._entries = self._decrypt_v2_contents(data)
         self._legacy = False
+        self._principal = "human"
         return self._entries
+
+    # -- principal + generic wrapped slots (Phase 2A) -------------------------
+    def _require_human(self, action="this operation"):
+        if self._principal is not None and self._principal != "human":
+            raise PermissionError(f"agent sessions cannot perform {action}")
+
+    def get_slot(self, slot_id):
+        """Return the header slot dict with this id, or None (no unlock)."""
+        data = self._read_raw_file()
+        return next((s for s in data.get("slots", []) if s.get("id") == slot_id), None)
+
+    def unlock_via_wrapped_key(self, slot_id, wrapping_key, principal):
+        """Unlock using any wrapped-key slot. Returns entries or raises.
+
+        The GCM tag on the slot is the credential check: a wrong
+        wrapping key raises WrongPassword, exactly like a wrong
+        master password.
+        """
+        data = self._read_raw_file()
+        if data.get("format") != _FORMAT_TOKEN:
+            raise VaultCorrupt("wrapped-key unlock requires a Vault v2 vault")
+        slot = next((s for s in data.get("slots", []) if s.get("id") == slot_id), None)
+        if slot is None:
+            raise WrongPassword(f"no unlock slot: {slot_id}")
+        vault_key = self._unwrap_slot(slot, wrapping_key)
+        if vault_key is None:
+            raise WrongPassword("credential does not match this vault")
+        self._vault_key = vault_key
+        self._slots = data["slots"]
+        self._entries = self._decrypt_v2_contents(data)
+        self._legacy = False
+        self._principal = principal
+        return self._entries
+
+    def add_wrapped_slot(self, slot_id, wrapping_key, params=None):
+        """Add/replace a wrapped-key slot. Human principal, unlocked only."""
+        self._require_unlocked()
+        self._require_human("manage unlock slots")
+        slot = self._make_slot(slot_id, wrapping_key, params)
+        slot["algo"] = "argon2id"
+        self._slots = [s for s in self._slots if s.get("id") != slot_id] + [slot]
+        self._persist()
+        return slot
+
+    def remove_wrapped_slot(self, slot_id):
+        self._require_unlocked()
+        self._require_human("manage unlock slots")
+        self._slots = [s for s in self._slots if s.get("id") != slot_id]
+        self._persist()
 
     @classmethod
     def recover(cls, vault_file, phrase, new_master_password):
@@ -520,6 +592,9 @@ class MyKey:
         inst._entries = None
         inst._slots = None
         inst._legacy = False
+        inst._agents = {}
+        inst._audit_head = ""
+        inst._principal = None
         if len(new_master_password) < MIN_MASTER_PASSWORD_LENGTH:
             raise ValueError(
                 "master password must be at least "
@@ -530,6 +605,7 @@ class MyKey:
         return inst
 
     def change_master(self, new_master_password):
+        self._require_human("change the master password")
         if len(new_master_password) < MIN_MASTER_PASSWORD_LENGTH:
             raise ValueError(
                 "master password must be at least "
@@ -539,6 +615,32 @@ class MyKey:
         self.secret_input = new_master_password
         self._slots = [s for s in self._slots if s.get("id") != "master"] + [self._master_slot()]
         self._persist()
+
+    def rotate_vault_key(self):
+        """Re-key the vault: new data key, payload re-encrypted.
+
+        This is the cryptographic answer to a suspected credential
+        compromise (fleet threat review, finding 3): revocation alone
+        cannot claw back a vault copy someone already saved, because
+        old slots wrap the SAME key. Rotation retires every slot
+        except the master slot — all agents are dropped (re-enroll
+        them), recovery is dropped (set it up again), and the rolling
+        backup is deleted so no pre-rotation copy lingers. The master
+        password itself does not change.
+        """
+        self._require_human("rotate the vault key")
+        self._require_unlocked()
+        agents_dropped = len(self._agents)
+        recovery_dropped = self.get_slot("recovery") is not None
+        self._vault_key = os.urandom(32)
+        self._slots = [self._master_slot()]
+        self._agents = {}
+        self._persist()
+        backup = self.vault_file + ".bak"
+        if os.path.exists(backup):
+            os.unlink(backup)
+        return {"agents_dropped": agents_dropped,
+                "recovery_dropped": recovery_dropped}
 
     # -- TOTP ---------------------------------------------------------------------
     def totp_for(self, service, username=None, at=None):
@@ -551,6 +653,7 @@ class MyKey:
 
     # -- import ----------------------------------------------------------------------
     def import_entries(self, records, on_conflict="skip"):
+        self._require_human("import entries")
         from importers import resolve_import
 
         existing = [dict(e) for e in self._require_unlocked()]
@@ -562,6 +665,7 @@ class MyKey:
 
     # -- export ---------------------------------------------------------------------
     def export_vault_to_csv(self, path="mykey_export.csv"):
+        self._require_human("export the vault")
         try:
             entries = self._require_unlocked()
         except VaultMissing:

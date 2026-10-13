@@ -9,8 +9,8 @@ this PR only aligns the per-file headers with the map below.
 
 | Bucket | Files | Terms |
 |---|---|---|
-| **Interface layer — Apache 2.0** | `brand.py`, `mykey_gui.py`, `mykey_cli.py`, `first_run.py`, import *format definitions* (the documented column layouts each exporter emits, as listed in `importers.py` docstrings) | Apache License 2.0, including its §3 patent grant (below) |
-| **Core — Proprietary** | `mykey.py` (vault engine + cryptography), `recovery.py`, `totp.py`, `importers.py` (parsing/dedupe/conflict engine) | © 2351485 ALBERTA INC., all rights reserved. No licence is granted to copy, modify or redistribute. |
+| **Interface layer — Apache 2.0** | `brand.py`, `mykey_gui.py`, `mykey_cli.py`, `mykey_mcp.py` (stdio MCP shell), `first_run.py`, import *format definitions* (the documented column layouts each exporter emits, as listed in `importers.py` docstrings) | Apache License 2.0, including its §3 patent grant (below) |
+| **Core — Proprietary** | `mykey.py` (vault engine + cryptography), `agents.py` (agent registry, scope enforcement, audit chain), `recovery.py`, `totp.py`, `importers.py` (parsing/dedupe/conflict engine) | © 2351485 ALBERTA INC., all rights reserved. No licence is granted to copy, modify or redistribute. |
 | **Data file** | `bip39_english.txt` | The BIP-39 English wordlist, reproduced from the BIP-39 specification (bitcoin/bips). |
 
 ## Patents
@@ -42,9 +42,15 @@ than dressing them up):
 * BIP-39 mnemonics with checksum, RFC 6238 TOTP,
 * atomic file writes, typed-error handling, CSV format importers.
 
-Phase 1 contains **no mechanism we judge novel**. Phase 2 watch-list
-(not built; keep proprietary and unpublicised until evaluated, and
-expect heavy prior art — push-approval MFA is well-trodden ground):
+Phase 1 contains **no mechanism we judge novel**. Phase 2A adds the
+authorized-agent access layer (agent key-value registry, wrapped
+agent slots, scoped enforcement, hash-chained audit). That pattern —
+per-client hashed tokens with scopes, plus an append-only audit log —
+is likewise standard practice (the shape of every mature API-token
+system), **not** a patent candidate in our judgement. Phase 2
+watch-list (not built; keep proprietary and unpublicised until
+evaluated, and expect heavy prior art — push-approval MFA is
+well-trodden ground):
 
 * the phone-approval unlock protocol (desktop challenge approved on
   a companion device releasing a wrapped vault-key slot),
@@ -53,6 +59,24 @@ expect heavy prior art — push-approval MFA is well-trodden ground):
 The realistic everyday protections for the core are copyright,
 trademark and trade secrecy for anything not yet shipped — the
 reserved-rights posture above is what preserves those options.
+
+## Product terms (queued for the licence wave — not yet in the EULA)
+
+The standard product terms for all 2351485 ALBERTA INC. products are
+queued to land in the EULA/terms in the licence wave that follows
+Phase 2A: licensor/seller is 2351485 ALBERTA INC.; liability capped
+at the price paid; harm from the user's own exposure of the product
+to malicious or detrimental systems is not company liability;
+consumer protection laws respected (maximum extent permitted, with
+severability); venue for litigation, mediation and arbitration is
+Calgary, Alberta only; no liability for business decisions made in
+reliance on the product; no absolute security warranty (no
+guarantee of being unbreakable by ransomware or viruses). Drafting
+direction: structure and clause mechanics modelled on mainstream
+licence terms (defined terms, warranty disclaimer, exclusion of
+indirect/consequential damages, amount-paid cap, exceptions,
+maximum-extent-permitted wording) in original drafting — never
+copied text.
 
 ## Brand neutrality (rename-on-the-fly guarantee)
 

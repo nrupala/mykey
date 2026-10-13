@@ -22,6 +22,7 @@ come from brand.py — none are hard-coded here.
 import argparse
 import getpass
 import json
+import os
 import sys
 
 import brand
@@ -41,7 +42,19 @@ def main():
         "gen", "get", "add", "list", "search", "edit", "delete",
         "import", "export", "totp", "recovery-setup", "recovery-unlock",
         "recovery-rotate", "change-master",
+        # Phase 2A agent surfaces. agent-get/agent-list are the AGENT
+        # principal (token from env, no master prompt); the rest are
+        # human-only registry management after a master unlock.
+        "agent-get", "agent-list",
+        "agent-enroll", "agent-revoke", "agent-disable", "agent-enable",
+        "agents", "agent-audit", "agent-audit-reset",
+        "rotate-vault-key",
     ])
+    p.add_argument("--agent-id", help="Agent id (agent-enroll/-revoke/...)")
+    p.add_argument("--scopes", default="",
+                   help="Comma-separated agent scopes, e.g. list,get:github")
+    p.add_argument("--expires-days", type=int,
+                   help="Agent token lifetime in days (default: no expiry)")
     p.add_argument("--service")
     p.add_argument("--username", default="")
     p.add_argument("--url", default="")
@@ -63,6 +76,39 @@ def main():
         return 2
 
     try:
+        if args.action in ("agent-get", "agent-list"):
+            from agents import open_agent_session
+
+            token = os.environ.get("MYKEY_AGENT_KEY", "")
+            if not token:
+                print("❌ MYKEY_AGENT_KEY is not set — an agent token is "
+                      "required (the human enrolls one with agent-enroll).",
+                      file=sys.stderr)
+                return 2
+            session = open_agent_session(args.vault, token)
+            if args.action == "agent-list":
+                for e in session.list_metadata():
+                    _print_entry(e)
+            else:
+                if not args.service:
+                    print("❌ --service required", file=sys.stderr)
+                    return 2
+                from agents import AgentScopeError
+
+                try:
+                    e = session.get(args.service, args.username or None)
+                except (KeyError, AgentScopeError):
+                    # Missing vs out-of-scope MUST look identical
+                    # (existence oracle — fleet review, finding 6).
+                    # The audit log keeps the detail for the human.
+                    print("❌ Not available for this agent.", file=sys.stderr)
+                    return 1
+                # Authorized display of a credential to the agent the
+                # human scoped for it; the purpose of 'agent-get'.
+                # codeql[py/clear-text-logging-sensitive-data]
+                print(f"🔑 {e['service']} ({e['username']}): {e['password']}")
+            return 0
+
         if args.action == "recovery-unlock":
             phrase = getpass.getpass("Recovery phrase: ")
             probe = MyKey("recovery-probe-0000", vault_file=args.vault)
@@ -72,6 +118,62 @@ def main():
 
         master = getpass.getpass("Enter Master Password: ")
         app = MyKey(master, algo=args.kdf, vault_file=args.vault)
+
+        if args.action in ("agent-enroll", "agent-revoke", "agent-disable",
+                           "agent-enable", "agents", "agent-audit",
+                           "agent-audit-reset", "rotate-vault-key"):
+            from agents import (enroll_agent, list_agents, read_audit,
+                                reset_audit, revoke_agent, set_agent_enabled,
+                                verify_audit)
+
+            app.unlock()  # human principal from here on
+            if args.action == "agents":
+                for a in list_agents(app):
+                    state = "enabled" if a["enabled"] else "DISABLED"
+                    print(f"- {a['agent_id']}  [{state}]  scopes={','.join(a['scopes']) or '-'}"
+                          f"  expires={a['expires_at'] or 'never'}"
+                          f"  last_used={a['last_used_at'] or 'never'}")
+            elif args.action == "agent-audit":
+                check = verify_audit(args.vault, expected_head=app._audit_head)
+                for r in read_audit(args.vault):
+                    print(f"{r['ts']}  {r['agent']}  {r['action']} "
+                          f"{r['service'] or '-'}  {r['result']}"
+                          f"{(' (' + r['reason'] + ')') if r['reason'] else ''}")
+                print(f"Chain: {'OK' if check['ok'] else 'BROKEN — ' + check['error']}"
+                      f" ({check['count']} records)")
+                return 0 if check["ok"] else 1
+            elif args.action == "agent-audit-reset":
+                archive = reset_audit(app)
+                print("🧾 Audit log reset. "
+                      f"Suspect log preserved at: {archive or '(none existed)'}")
+            elif args.action == "rotate-vault-key":
+                result = app.rotate_vault_key()
+                print("🔄 Vault key rotated. All old slots are dead: "
+                      f"{result['agents_dropped']} agent(s) to re-enroll, "
+                      f"recovery {'must be set up again' if result['recovery_dropped'] else 'was not set up'}. "
+                      "Your master password is unchanged.")
+            else:
+                if not args.agent_id:
+                    print("❌ --agent-id required", file=sys.stderr)
+                    return 2
+                if args.action == "agent-enroll":
+                    scopes = [s.strip() for s in
+                              (args.scopes or "list").split(",") if s.strip()]
+                    token = enroll_agent(app, args.agent_id, scopes,
+                                         expires_days=args.expires_days)
+                    print(f"🤖 Agent '{args.agent_id}' enrolled. Token (shown ONCE, "
+                          "store it in the agent's environment as MYKEY_AGENT_KEY):")
+                    print(token)
+                elif args.action == "agent-revoke":
+                    revoke_agent(app, args.agent_id)
+                    print(f"🗑 Agent '{args.agent_id}' revoked — its token is dead.")
+                elif args.action == "agent-disable":
+                    set_agent_enabled(app, args.agent_id, False)
+                    print(f"⏸ Agent '{args.agent_id}' disabled.")
+                elif args.action == "agent-enable":
+                    set_agent_enabled(app, args.agent_id, True)
+                    print(f"▶️ Agent '{args.agent_id}' enabled.")
+            return 0
 
         if args.action == "gen":
             pw = app.generate_password(args.len)
