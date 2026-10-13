@@ -35,7 +35,7 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 import pyperclip
 
 import brand
-from mykey import MyKey, make_entry
+from mykey import MyKey, make_entry, rotation_line, rotation_status
 
 
 class MyKeyGUI:
@@ -71,6 +71,10 @@ class MyKeyGUI:
         vault_menu.add_command(label="Export CSV…", command=self.do_export)
         vault_menu.add_command(label="Set up recovery phrase…",
                                command=self.do_recovery_setup)
+        vault_menu.add_command(label="Password rotation…",
+                               command=self.do_rotation_report)
+        vault_menu.add_command(label="Set rotation default…",
+                               command=self.do_rotation_default)
         sync_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="Sync & Backup", menu=sync_menu)
         sync_menu.add_command(label="Sync status…", command=self.do_sync_status)
@@ -91,8 +95,12 @@ class MyKeyGUI:
         self.search_entry.bind("<KeyRelease>", lambda _e: self.refresh_list())
 
         self.listbox = tk.Listbox(main, height=8, font=("Arial", 10))
-        self.listbox.pack(fill=tk.X, pady=(0, 12))
+        self.listbox.pack(fill=tk.X, pady=(0, 2))
         self.listbox.bind("<<ListboxSelect>>", self.on_select)
+
+        self.rotation_count_label = ttk.Label(
+            main, text="", font=("Arial", 9, "bold"))
+        self.rotation_count_label.pack(anchor=tk.W, pady=(0, 10))
 
         self.fields = {}
         for label, key in (("SERVICE NAME", "service"), ("USERNAME", "username"),
@@ -103,6 +111,9 @@ class MyKeyGUI:
                              show="*" if key == "password" else "")
             entry.pack(fill=tk.X, pady=(0, 6))
             self.fields[key] = entry
+
+        self.rotation_label = ttk.Label(main, text="", font=("Arial", 9))
+        self.rotation_label.pack(anchor=tk.W, pady=(2, 0))
 
         row = ttk.Frame(main)
         row.pack(fill=tk.X, pady=4)
@@ -116,6 +127,8 @@ class MyKeyGUI:
                    command=self.do_save_typed).pack(fill=tk.X, pady=2)
         ttk.Button(main, text="GENERATE & SAVE",
                    command=self.do_generate).pack(fill=tk.X, pady=2)
+        ttk.Button(main, text="MARK AS CHANGED TODAY",
+                   command=self.do_mark_changed).pack(fill=tk.X, pady=2)
         ttk.Button(main, text="DELETE ENTRY",
                    command=self.do_delete).pack(fill=tk.X, pady=2)
 
@@ -131,10 +144,20 @@ class MyKeyGUI:
         entries = (self.app.search_entries(query) if query
                    else self.app.list_entries())
         self._listed = entries
+        default = self.app.vault_settings()["default_rotate_days"]
         self.listbox.delete(0, tk.END)
         for e in entries:
             label = e["service"] + (f" ({e['username']})" if e["username"] else "")
+            state = rotation_status(e, default)["state"]
+            if state == "overdue":
+                label += "  ⚠️ change overdue"
+            elif state == "due_soon":
+                label += "  ⏰ change due"
             self.listbox.insert(tk.END, label)
+        due = self.app.rotation_due_count()
+        self.rotation_count_label.config(
+            text=(f"{due} password(s) due for a change — "
+                  "see Vault → Password rotation" if due else ""))
 
     def on_select(self, _event=None):
         sel = self.listbox.curselection()
@@ -145,6 +168,8 @@ class MyKeyGUI:
             widget.delete(0, tk.END)
             widget.insert(0, entry.get(key, "") or "")
         self.current_pw_value = entry["password"]
+        default = self.app.vault_settings()["default_rotate_days"]
+        self.rotation_label.config(text=rotation_line(entry, default))
 
     def toggle_pw(self):
         self.is_masked = not self.is_masked
@@ -208,6 +233,64 @@ class MyKeyGUI:
         self.fields["password"].delete(0, tk.END)
         self.fields["password"].insert(0, new_pw)
         self.current_pw_value = new_pw
+        self.refresh_list()
+
+    def do_mark_changed(self):
+        """The password was changed on the website itself: move only
+        the age clock, the stored value is untouched."""
+        form = self._form()
+        if not form["service"]:
+            return
+        try:
+            entry = self.app.mark_password_changed(
+                form["service"], form["username"] or None)
+        except Exception as exc:
+            messagebox.showerror(brand.PRODUCT_NAME, str(exc))
+            return
+        default = self.app.vault_settings()["default_rotate_days"]
+        self.rotation_label.config(text=rotation_line(entry, default))
+        self.refresh_list()
+
+    def do_rotation_report(self):
+        default = self.app.vault_settings()["default_rotate_days"]
+        header = ("Default: no rotation by default" if not default
+                  else f"Default: change every {default} days")
+        rows = [r for r in self.app.rotation_report()
+                if r["state"] in ("overdue", "due_soon", "unknown")]
+        if not rows:
+            body = "Nothing needs changing right now."
+        else:
+            lines = []
+            for r in rows:
+                line = rotation_line(
+                    {"password_set_at": r["password_set_at"],
+                     "rotate_days": r["rotate_days"]}, None)
+                suffix = {"overdue": " — overdue",
+                          "due_soon": " — due soon"}.get(r["state"], "")
+                lines.append(f"{r['service']}: {line}{suffix}")
+            body = "\n".join(lines)
+        messagebox.showinfo(brand.PRODUCT_NAME,
+                            f"Password rotation\n\n{header}\n\n{body}")
+
+    def do_rotation_default(self):
+        answer = simpledialog.askstring(
+            brand.PRODUCT_NAME,
+            "Change every password after how many days?\n"
+            "Type a number (the standard is 180), or 'never'.",
+        )
+        if answer is None:
+            return
+        answer = answer.strip().lower()
+        try:
+            value = 0 if answer in ("never", "off", "0") else int(answer)
+            if value < 0:
+                raise ValueError
+            self.app.set_default_rotate_days(value)
+        except (ValueError, TypeError):
+            messagebox.showwarning(
+                brand.PRODUCT_NAME,
+                "Please type a whole number of days, or 'never'.")
+            return
         self.refresh_list()
 
     def do_delete(self):

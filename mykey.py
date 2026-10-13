@@ -84,8 +84,17 @@ _PBKDF2_ITERATIONS = 600000
 
 ENTRY_FIELDS = (
     "service", "username", "password", "url", "notes",
-    "totp_secret", "tags", "favourite",
+    "totp_secret", "tags", "favourite", "rotate_days",
 )
+# Password age + rotation (owner directive, 2026-10-13). The dates
+# live ONLY inside the encrypted payload: `password_set_at` and the
+# per-entry `rotate_days` override ride in the entry's secret blob
+# (they are facts about the password, so they get the password's own
+# key and never appear in metadata an agent bundle can carry); the
+# vault-wide default rides in the encrypted core with the other
+# vault settings. Nothing is written to a plaintext sidecar.
+DEFAULT_ROTATE_DAYS = 180
+ROTATION_DUE_SOON_DAYS = 14
 _METADATA_FIELDS = ("service", "username", "url", "tags", "favourite",
                     "created", "updated")
 # Hard caps (fleet design review, finding 9): agent-submitted pending
@@ -246,6 +255,10 @@ def make_entry(service, password="", username="", url="", notes="",
         "favourite": bool(favourite),
         "created": ts,
         "updated": ts,
+        # A password's age clock starts when the entry is created;
+        # rotate_days None means "use the vault default".
+        "password_set_at": ts,
+        "rotate_days": None,
     }
     for key, value in extra.items():
         if key not in entry:
@@ -267,7 +280,90 @@ def _normalize_entry(raw):
     entry["id"] = raw.get("id", entry["id"])
     entry["created"] = raw.get("created", entry["created"])
     entry["updated"] = raw.get("updated", entry["updated"])
+    # Rotation fields: vaults written before this feature have no
+    # password_set_at — fall back to the entry's creation time when
+    # the record carries one, else None ("date not recorded").
+    psa = raw.get("password_set_at")
+    if psa is None:
+        psa = raw.get("created")
+    entry["password_set_at"] = int(psa) if psa is not None else None
+    rotate_days = raw.get("rotate_days")
+    entry["rotate_days"] = int(rotate_days) if rotate_days is not None else None
     return entry
+
+
+def _validate_rotate_days(value, what="rotation period"):
+    """Normalize a rotation period: None (unset) or an int >= 0.
+
+    0 means "never rotate". Anything else is a ValueError — a
+    negative or fractional period is a caller bug, never stored.
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{what} must be a whole number of days or unset")
+    if value < 0:
+        raise ValueError(f"{what} must be 0 (never) or a positive number of days")
+    return value
+
+
+def rotation_status(entry, default_rotate_days, now=None):
+    """Due state for one entry's password.
+
+    Returns a dict: password_set_at, rotate_days (the effective
+    period after the per-entry override and vault default are
+    resolved), due_at, days_left, and state — one of "off" (no
+    rotation for this entry), "unknown" (no set date recorded),
+    "ok", "due_soon" (within ROTATION_DUE_SOON_DAYS) or "overdue".
+    """
+    now = _now() if now is None else int(now)
+    period = entry.get("rotate_days")
+    if period is None:
+        period = default_rotate_days
+    psa = entry.get("password_set_at")
+    status = {
+        "password_set_at": psa,
+        "rotate_days": period,
+        "due_at": None,
+        "days_left": None,
+        "state": "off",
+    }
+    if period is None or int(period) <= 0:
+        return status
+    if psa is None:
+        status["state"] = "unknown"
+        return status
+    due_at = int(psa) + int(period) * 86400
+    status["due_at"] = due_at
+    status["days_left"] = (due_at - now) // 86400
+    if now >= due_at:
+        status["state"] = "overdue"
+    elif due_at - now <= ROTATION_DUE_SOON_DAYS * 86400:
+        status["state"] = "due_soon"
+    else:
+        status["state"] = "ok"
+    return status
+
+
+def _format_day(ts):
+    import datetime
+
+    return datetime.datetime.fromtimestamp(int(ts)).strftime("%d %b %Y")
+
+
+def rotation_line(entry, default_rotate_days, now=None):
+    """One plain-language line about an entry's password age.
+
+    Shared by the CLI and GUI so both say the same words, e.g.
+    "Password set 13 Oct 2026 · change by 11 Apr 2027".
+    """
+    status = rotation_status(entry, default_rotate_days, now=now)
+    if status["password_set_at"] is None:
+        return "Password date not recorded"
+    line = f"Password set {_format_day(status['password_set_at'])}"
+    if status["state"] == "off":
+        return line + " · change date off"
+    return line + f" · change by {_format_day(status['due_at'])}"
 
 
 class MyKey:
@@ -312,6 +408,9 @@ class MyKey:
         # live only inside the encrypted core, like the agent registry.
         self._devices = {}
         self._backup_recovery_pub = None
+        # Vault settings (encrypted core): the default password
+        # rotation period in days; None/0 = no rotation by default.
+        self._settings = {"default_rotate_days": DEFAULT_ROTATE_DAYS}
         # "human" once unlocked by master/recovery; "agent:<id>" for an
         # agent session. Human-only operations check this.
         self._principal = None
@@ -453,6 +552,7 @@ class MyKey:
             "backup_recovery_pub": (
                 _b64e(self._backup_recovery_pub)
                 if self._backup_recovery_pub else None),
+            "settings": dict(self._settings),
         }
 
     def _entry_object(self, entry):
@@ -465,6 +565,8 @@ class MyKey:
             "meta": _enc(self._kmeta, json.dumps(meta).encode(), _aad("meta", eid)),
             "secret": _enc(deks["pw"], json.dumps({
                 "password": entry["password"], "notes": entry["notes"],
+                "password_set_at": entry.get("password_set_at"),
+                "rotate_days": entry.get("rotate_days"),
             }).encode(), _aad("secret", eid)),
             "totp": None,
             "pending": None,
@@ -579,6 +681,15 @@ class MyKey:
         self._devices = core.get("devices") or {}
         raw_pub = core.get("backup_recovery_pub")
         self._backup_recovery_pub = _b64d(raw_pub) if raw_pub else None
+        # Vault settings; absent in cores written before the
+        # rotation feature — the shipped default applies.
+        raw_settings = core.get("settings") or {}
+        raw_default = raw_settings.get("default_rotate_days",
+                                       DEFAULT_ROTATE_DAYS)
+        self._settings = {
+            "default_rotate_days": (int(raw_default)
+                                    if raw_default is not None else None),
+        }
 
     def _decrypt_v3_contents(self, data):
         try:
@@ -1203,10 +1314,19 @@ class MyKey:
         if idx < 0:
             raise KeyError(f"no entry for service: {service}")
         record = self._entries[idx]
+        if "rotate_days" in fields:
+            fields["rotate_days"] = _validate_rotate_days(
+                fields["rotate_days"], "entry rotation period")
+        old_password = record["password"]
+        ts = _now()
         for key, value in fields.items():
             if key in ENTRY_FIELDS:
                 record[key] = list(value) if key == "tags" else value
-        record["updated"] = _now()
+        # The age clock resets only when the password itself changes
+        # — editing service/username/url/notes/tags never touches it.
+        if "password" in fields and fields["password"] != old_password:
+            record["password_set_at"] = ts
+        record["updated"] = ts
         if record.get("totp_secret") and self._deks[record["id"]].get("totp") is None:
             self._deks[record["id"]]["totp"] = os.urandom(32)
         if not record.get("totp_secret"):
@@ -1225,6 +1345,67 @@ class MyKey:
         self._entry_hashes.pop(removed["id"], None)
         self._persist()
         return dict(removed)
+
+    # -- password age + rotation ---------------------------------------------
+    def vault_settings(self):
+        """A copy of the vault settings stored in the encrypted core."""
+        self._require_unlocked()
+        return dict(self._settings)
+
+    def set_default_rotate_days(self, value):
+        """Set the vault-wide default rotation period (days).
+
+        None or 0 = no rotation by default; a positive int = days.
+        Per-entry overrides still win over this default.
+        """
+        self._require_human("change vault settings")
+        self._require_unlocked()
+        self._settings["default_rotate_days"] = _validate_rotate_days(
+            value, "default rotation period")
+        self._persist()
+        return dict(self._settings)
+
+    def mark_password_changed(self, service, username=None, at=None):
+        """Record that this entry's password was changed today.
+
+        For passwords rotated on the website itself, where the vault
+        never sees the new value: only the age clock moves.
+        """
+        idx = self._find_index(service, username)
+        if idx < 0:
+            raise KeyError(f"no entry for service: {service}")
+        record = self._entries[idx]
+        ts = _now() if at is None else int(at)
+        record["password_set_at"] = ts
+        record["updated"] = ts
+        self._persist()
+        return dict(record)
+
+    def rotation_report(self, now=None):
+        """Per-entry rotation status for the whole vault.
+
+        Sorted so the entries needing attention come first:
+        overdue, due soon, unknown date, ok, rotation off.
+        """
+        entries = self._require_unlocked()
+        default = self._settings.get("default_rotate_days")
+        order = {"overdue": 0, "due_soon": 1, "unknown": 2, "ok": 3, "off": 4}
+        report = []
+        for e in entries:
+            status = rotation_status(e, default, now=now)
+            report.append({
+                "service": e["service"],
+                "username": e["username"],
+                "id": e["id"],
+                **status,
+            })
+        report.sort(key=lambda r: (order[r["state"]], r["service"].lower()))
+        return report
+
+    def rotation_due_count(self, now=None):
+        """How many entries are due soon or overdue right now."""
+        return sum(1 for r in self.rotation_report(now=now)
+                   if r["state"] in ("due_soon", "overdue"))
 
     # -- Phase 0 compatible API ------------------------------------------------
     def save_password(self, service, password, **fields):
@@ -1402,6 +1583,7 @@ class MyKey:
         inst._raw_pending = {}
         inst._devices = {}
         inst._backup_recovery_pub = None
+        inst._settings = {"default_rotate_days": DEFAULT_ROTATE_DAYS}
         inst._principal = None
         if len(new_master_password) < MIN_MASTER_PASSWORD_LENGTH:
             raise ValueError(

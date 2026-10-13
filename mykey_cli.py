@@ -26,12 +26,19 @@ import os
 import sys
 
 import brand
-from mykey import MIN_GENERATED_PASSWORD_LENGTH, MyKey, MyKeyError, make_entry
+from mykey import (MIN_GENERATED_PASSWORD_LENGTH, MyKey, MyKeyError,
+                   make_entry, rotation_line, rotation_status)
 
 
-def _print_entry(e):
-    print(f"- {e['service']}  user={e['username'] or '-'}  url={e['url'] or '-'}"
-          f"{'  ★' if e['favourite'] else ''}")
+def _print_entry(e, status=None):
+    line = (f"- {e['service']}  user={e['username'] or '-'}  url={e['url'] or '-'}"
+            f"{'  ★' if e['favourite'] else ''}")
+    if status is not None:
+        if status["state"] == "overdue":
+            line += "  ⚠️ password change overdue"
+        elif status["state"] == "due_soon":
+            line += "  ⏰ password change due soon"
+    print(line)
 
 
 def _load_identity(args):
@@ -54,6 +61,8 @@ def main():
         "gen", "get", "add", "list", "search", "edit", "delete",
         "import", "export", "totp", "recovery-setup", "recovery-unlock",
         "recovery-rotate", "change-master",
+        # Password age + rotation: report, mark-changed.
+        "rotation", "mark-changed",
         # Phase 2A agent surfaces. agent-get/agent-list are the AGENT
         # principal (token from env, no master prompt); the rest are
         # human-only registry management after a master unlock.
@@ -78,6 +87,19 @@ def main():
     p.add_argument("--url", default="")
     p.add_argument("--notes", default="")
     p.add_argument("--password", help="New password value (edit action)")
+    p.add_argument("--rotate-days", type=int, default=None,
+                   help="Per-entry rotation period in days (edit action); "
+                        "0 = never rotate this entry")
+    p.add_argument("--rotate-days-clear", action="store_true",
+                   help="Remove the per-entry rotation period (edit action); "
+                        "the vault default applies again")
+    p.add_argument("--set-default-days", type=int, default=None,
+                   help="Set the vault default rotation period in days "
+                        "(rotation action); 0 = no rotation by default")
+    p.add_argument("--set-default-never", action="store_true",
+                   help="Turn the vault default rotation off (rotation action)")
+    p.add_argument("--all", action="store_true",
+                   help="Show every entry, not just due ones (rotation action)")
     p.add_argument("--len", type=int, default=16)
     p.add_argument("--kdf", choices=["argon2id", "pbkdf2"], default="argon2id")
     p.add_argument("--vault", default="vault.mykey")
@@ -494,12 +516,14 @@ def main():
             print(f"🔑 {e['service']} ({e['username']}): {e['password']}")
         elif args.action == "list":
             entries = app.list_entries()
+            default = app.vault_settings()["default_rotate_days"]
             for e in entries:
-                _print_entry(e)
+                _print_entry(e, rotation_status(e, default))
             print(f"({len(entries)} entries)")
         elif args.action == "search":
+            default = app.vault_settings()["default_rotate_days"]
             for e in app.search_entries(args.query):
-                _print_entry(e)
+                _print_entry(e, rotation_status(e, default))
         elif args.action == "edit":
             fields = {}
             if args.password is not None:
@@ -508,8 +532,48 @@ def main():
                 fields["url"] = args.url
             if args.notes:
                 fields["notes"] = args.notes
+            if args.rotate_days is not None:
+                fields["rotate_days"] = args.rotate_days
+            if args.rotate_days_clear:
+                fields["rotate_days"] = None
             app.update_entry(args.service, args.username or None, **fields)
             print(f"✅ Updated {args.service}.")
+        elif args.action == "rotation":
+            if args.set_default_never or args.set_default_days is not None:
+                value = None if args.set_default_never \
+                    else args.set_default_days
+                app.set_default_rotate_days(value)
+                print("✅ Vault default updated: "
+                      + ("no rotation by default."
+                         if not value else
+                         f"change passwords every {value} days."))
+            default = app.vault_settings()["default_rotate_days"]
+            print("Default: " + ("no rotation by default" if not default
+                                 else f"change every {default} days")
+                  + " (per-entry settings win over the default)")
+            report = app.rotation_report()
+            rows = report if args.all else [
+                r for r in report
+                if r["state"] in ("overdue", "due_soon", "unknown")]
+            if not rows:
+                print("Nothing needs changing right now.")
+            for r in rows:
+                line = rotation_line(
+                    {"password_set_at": r["password_set_at"],
+                     "rotate_days": r["rotate_days"]}, None)
+                suffix = {"overdue": " — overdue",
+                          "due_soon": " — due soon",
+                          "unknown": ""}.get(r["state"], "")
+                print(f"- {r['service']}  user={r['username'] or '-'}  "
+                      f"{line}{suffix}")
+            due = sum(1 for r in report
+                      if r["state"] in ("overdue", "due_soon"))
+            print(f"({due} of {len(report)} passwords due for a change)")
+        elif args.action == "mark-changed":
+            if not args.service:
+                print("❌ --service required", file=sys.stderr); return 2
+            app.mark_password_changed(args.service, args.username or None)
+            print(f"✅ {args.service}: marked as changed today.")
         elif args.action == "delete":
             app.delete_entry(args.service, args.username or None)
             print(f"🗑 Deleted {args.service}.")
