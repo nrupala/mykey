@@ -42,6 +42,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   working tree). The missing sections are rewritten from the
   shipped code and re-verified against it.
 
+### Added — Password age + rotation
+- **Every password gets an age clock.** The vault records when
+  each password was set — at creation and whenever the password
+  itself changes (including generate-and-save). Editing notes,
+  tags, URL or other details never moves the clock. A "mark as
+  changed today" action (CLI `mark-changed`, GUI button) covers
+  passwords rotated on the website itself.
+- **Rotation dates, your choice.** The vault default is 180 days
+  and is editable (`rotation --set-default-days N`, or
+  `--set-default-never`). A per-entry override (`edit
+  --rotate-days N`, `0` = never, `--rotate-days-clear` back to the
+  default) wins over the vault default.
+- **Calm surfacing, no nagging.** Entry views show "Password set
+  13 Oct 2026 · change by 11 Apr 2027" / "change date off" /
+  "date not recorded"; lists badge due-soon and overdue entries;
+  unlock shows a due count; the `rotation` CLI command and the
+  GUI's Vault → Password rotation view list what needs attention.
+  Due soon means within 14 days. No notifications are sent —
+  noted as future work.
+- **Private by construction.** The set date and per-entry period
+  are stored inside the entry's encrypted secret blob; the vault
+  default lives in the encrypted core. Nothing is written to a
+  plaintext sidecar, and agent metadata never carries the fields.
+  Vaults written before this feature open unchanged: the set date
+  falls back to the entry's creation time, or shows "date not
+  recorded" when no creation time exists.
+
 ### Added — Phase 3A: user-cloud sync + device-key backup packages
 - **Sync through your own cloud folder.** A provider-neutral sync
   layer (folder provider shipped; no OAuth cloud APIs) moves the
