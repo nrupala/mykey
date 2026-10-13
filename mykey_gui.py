@@ -114,6 +114,12 @@ class MyKeyGUI:
         menubar.add_cascade(label="About", menu=about_menu)
         about_menu.add_command(label=f"About {brand.PRODUCT_NAME}",
                                command=self.show_about)
+        about_menu.add_separator()
+        about_menu.add_command(label="Enter licence key…",
+                               command=self.do_licence_activate)
+        about_menu.add_command(label="Buy a licence",
+                               command=self.do_licence_buy)
+        about_menu.add_command(label="Tip jar", command=self.do_tip)
 
         main = ttk.Frame(self.root, padding="14")
         main.pack(fill=tk.BOTH, expand=True)
@@ -386,6 +392,14 @@ class MyKeyGUI:
                 return
             stats = self.app.import_entries(records, on_conflict="skip")
             messagebox.showinfo(brand.PRODUCT_NAME, f"Imported: {stats}")
+            if stats.get("held_back"):
+                messagebox.showwarning(
+                    brand.PRODUCT_NAME,
+                    f"{stats['held_back']} password(s) were NOT "
+                    "imported: the free version holds up to 50. "
+                    "Enter a licence key (About → Enter licence key) "
+                    "and import the same file again to bring them in.",
+                )
             messagebox.showwarning(
                 brand.PRODUCT_NAME,
                 "Delete the plaintext export file now — it is unencrypted.",
@@ -564,6 +578,43 @@ class MyKeyGUI:
             "restored vault.",
         )
 
+    # -- Licensing wave ------------------------------------------------
+    def do_licence_activate(self):
+        import licensing
+
+        key = simpledialog.askstring(
+            brand.PRODUCT_NAME,
+            "Paste your licence key.\n"
+            "It is checked on this computer only — nothing is sent "
+            "anywhere.",
+        )
+        if not key:
+            return
+        try:
+            payload = licensing.activate_licence(self.app, key)
+        except Exception as exc:
+            messagebox.showerror(brand.PRODUCT_NAME, str(exc))
+            return
+        messagebox.showinfo(
+            brand.PRODUCT_NAME,
+            f"Licence active — thank you.\nLicence "
+            f"{payload['licence_id']} for {payload['licensee']}:\n"
+            "unlimited passwords, "
+            f"{payload['max_connections']} connections.\n\n"
+            "The key is stored in this vault (it travels with it) "
+            "and on this device, so new vaults here start licensed.",
+        )
+
+    def do_licence_buy(self):
+        import webbrowser
+
+        webbrowser.open(brand.LICENCE_BUY_URL)
+
+    def do_tip(self):
+        import webbrowser
+
+        webbrowser.open(brand.TIP_URL)
+
     # -- Help & About (in-app, fully offline: the text ships with
     # the app as HELP.md / FAQ.md beside this file — the same files
     # the repo carries as docs, mirrored byte-for-byte in the
@@ -682,6 +733,13 @@ class MyKeyGUI:
                     "in the app folder.\n\n"
                     "What is in this version: see CHANGELOG.md in the "
                     "app folder.\n")
+        try:
+            import licensing
+
+            text.insert(tk.END,
+                        licensing.status_line(self.app) + "\n\n")
+        except Exception:
+            pass
         self._about_licence_block(text)
         text.configure(state=tk.DISABLED)
 

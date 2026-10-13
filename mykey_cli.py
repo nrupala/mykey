@@ -288,6 +288,8 @@ def main():
         "ext-host-payload", "ext-enroll", "ext-pairings",
         "ext-revoke", "ext-disable", "ext-enable",
         "ext-set-vault", "ext-set", "ext-host-install",
+        # Licensing wave: free-tier status + licence key activation.
+        "licence", "licence-activate",
     ])
     p.add_argument("--agent-id", help="Agent id (agent-enroll/-revoke/...)")
     p.add_argument("--scopes", default="",
@@ -329,6 +331,9 @@ def main():
     p.add_argument("--label", default="", help="Device label (device-init)")
     p.add_argument("--device-keys",
                    help="Device key file path (default: ~/.mykey/device-keys.json)")
+    p.add_argument("--key", dest="licence_key",
+                   help="Licence key (licence-activate; prompted if omitted — "
+                        "a prompt keeps the key out of shell history)")
     p.add_argument("--self", dest="self_enroll", action="store_true",
                    help="Enroll THIS device (device-enroll)")
     p.add_argument("--yes", action="store_true",
@@ -781,6 +786,44 @@ def main():
         master = _prompt_secret("Enter Master Password: ")
         app = MyKey(master, algo=args.kdf, vault_file=args.vault)
 
+        # ---- Licensing wave --------------------------------------
+        if args.action in ("licence", "licence-activate"):
+            import licensing
+
+            app.unlock()  # human principal from here on
+            if args.action == "licence":
+                st = licensing.licence_status(app)
+                if st["licensed"]:
+                    print(f"✅ Licensed to {st['licensee']} "
+                          f"(licence {st['licence_id']})")
+                    print("   Passwords: unlimited")
+                else:
+                    print("Free version")
+                    print(f"   Passwords: {st['entries']} of "
+                          f"{st['entry_limit']}")
+                    print(f"   Buy a licence: {brand.LICENCE_BUY_URL} — "
+                          "then run licence-activate and paste the key.")
+                bd = st["connections_breakdown"]
+                print(f"   Connections: {st['connections']} of "
+                      f"{st['connection_limit']} in use "
+                      f"({bd['devices']} devices, {bd['agents']} agents, "
+                      f"{bd['browsers']} paired browsers)")
+                print("   The limits are a fairness limit checked in "
+                      "the app, offline — nothing is sent anywhere, "
+                      "and everything already saved always works.")
+            else:
+                key = args.licence_key or input(
+                    "Paste your licence key: ").strip()
+                payload = licensing.activate_licence(app, key)
+                print(f"✅ Licence active — thank you. Licence "
+                      f"{payload['licence_id']} for "
+                      f"{payload['licensee']}: unlimited passwords, "
+                      f"{payload['max_connections']} connections. "
+                      "The key is stored in this vault (it travels "
+                      "with it) and on this device (new vaults here "
+                      "start licensed).")
+            return 0
+
         if args.action in ("agent-enroll", "agent-revoke", "agent-disable",
                            "agent-enable", "agents", "agent-audit",
                            "agent-audit-reset", "rotate-vault-key"):
@@ -1164,6 +1207,12 @@ def main():
                 return 0
             stats = app.import_entries(records, on_conflict=args.on_conflict)
             print(f"✅ Imported ({fmt}): {json.dumps(stats)}")
+            if stats.get("held_back"):
+                print(f"⏸  {stats['held_back']} password(s) were NOT "
+                      "imported: the free version holds up to 50. "
+                      "Enter a licence key (licence-activate) and run "
+                      "the same import again to bring them in — the "
+                      "ones already imported are skipped as duplicates.")
             print("⚠️  Delete the plaintext export file now — it is unencrypted.")
         elif args.action == "export":
             ok, msg = app.export_vault_to_csv(args.file or "mykey_export.csv")

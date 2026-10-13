@@ -446,9 +446,17 @@ class MyKey:
         # record) for cloud-storage / export targets. Same home as
         # the device registry: public material only, inside the core.
         self._pairings = {}
-        # Vault settings (encrypted core): the default password
-        # rotation period in days; None/0 = no rotation by default.
+        # Vault settings (free-form dict inside the encrypted core,
+        # shared by waves): "default_rotate_days" (rotation wave),
+        # the stored licence key + browser pairings (licensing wave
+        # — see licensing.py), and other client-shared preferences.
+        # Every key is preserved verbatim on load; no wave may
+        # rebuild this dict with only its own keys.
         self._settings = {"default_rotate_days": DEFAULT_ROTATE_DAYS}
+        # Agent pending inserts refused at THIS unlock by the free
+        # entry limit: [(entry_id, agent_id, service)] — drained by
+        # _finish_human_unlock into audit records (see licensing.py).
+        self._pending_licence_denied = []
         # "human" once unlocked by master/recovery; "agent:<id>" for an
         # agent session. Human-only operations check this.
         self._principal = None
@@ -723,14 +731,15 @@ class MyKey:
         raw_pub = core.get("backup_recovery_pub")
         self._backup_recovery_pub = _b64d(raw_pub) if raw_pub else None
         # Vault settings; absent in cores written before the
-        # rotation feature — the shipped default applies.
-        raw_settings = core.get("settings") or {}
+        # rotation feature — the shipped default applies. ALL keys
+        # are preserved (licence key, browser pairings, …); only
+        # the rotation default is normalized here.
+        raw_settings = dict(core.get("settings") or {})
         raw_default = raw_settings.get("default_rotate_days",
                                        DEFAULT_ROTATE_DAYS)
-        self._settings = {
-            "default_rotate_days": (int(raw_default)
-                                    if raw_default is not None else None),
-        }
+        raw_settings["default_rotate_days"] = (
+            int(raw_default) if raw_default is not None else None)
+        self._settings = raw_settings
 
     def _decrypt_v3_contents(self, data):
         try:
@@ -927,6 +936,60 @@ class MyKey:
             self._origins[e["id"]] = "human"
 
     # -- unlock (v3) -----------------------------------------------------------
+    def _audit_mac_key_for(self, agent_id):
+        """The audit MAC key an author's records verify under:
+        the agent's own key (live or retired registry), else None."""
+        rec = self._agents.get(agent_id)
+        if rec is not None and rec.get("audit_mac_key"):
+            return _b64d(rec["audit_mac_key"])
+        raw = self._retired_audit_keys.get(agent_id)
+        return _b64d(raw) if raw else None
+
+    def _append_audit_record(self, agent, action, service, result,
+                             reason="", mac_key=None):
+        """Append one record to the audit chain — the engine's own
+        mirror of agents.append_audit (identical record shape and
+        atomic write), for events the engine itself must record
+        (licence-denied agent inserts). The record is MAC'd with
+        its author's key, exactly as agents.verify_audit expects.
+        Returns the new chain head."""
+        path = self.vault_file + ".audit.jsonl"
+        records = read_audit_records(path)
+        prev = records[-1]["hash"] if records else ""
+        record = {
+            "ts": int(time.time()),
+            "agent": agent,
+            "action": action,
+            "service": service or "",
+            "result": result,
+            "reason": reason or "",
+            "prev": prev,
+        }
+        record["hash"] = audit_chain_hash(prev, record)
+        if mac_key is not None:
+            record["mac"] = hmac.new(
+                mac_key, record["hash"].encode(), hashlib.sha256
+            ).hexdigest()
+        directory = os.path.dirname(os.path.abspath(path))
+        fd, tmp = tempfile.mkstemp(dir=directory, prefix=".audit-",
+                                   suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                for old in records:
+                    f.write(json.dumps(old, sort_keys=True) + "\n")
+                f.write(json.dumps(record, sort_keys=True) + "\n")
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, path)
+            os.chmod(path, 0o600)
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
+        return record["hash"]
+
     def _finish_human_unlock(self, entries):
         """Shared tail of every human unlock: audit verification
         FIRST (entries are not exposed if it fails), then pending
@@ -972,10 +1035,45 @@ class MyKey:
         self._entries = entries
         accepted = self._process_pending()
         retired = self._retire_expired_agents()
+        # Licensing wave: audit-record each licence-denied pending
+        # insert ONCE per queued entry (the notified set rides in
+        # the vault settings, so repeat unlocks don't spam the log),
+        # with the plain reason. The submission itself stays queued.
+        denied_now = list(getattr(self, "_pending_licence_denied", []))
+        if denied_now:
+            notified = set(self.get_setting("licence_denied_pending") or [])
+            for eid, agent_id, service in denied_now:
+                if eid in notified:
+                    continue
+                key = self._audit_mac_key_for(agent_id)
+                if key is not None:
+                    head = self._append_audit_record(
+                        agent_id, "add", service, "deny",
+                        "licence required: the free entry limit was "
+                        "reached — this submission stays queued until "
+                        "a licence is entered or room is made",
+                        mac_key=key)
+                else:
+                    human_key = hmac.new(
+                        self._vault_key, b"audit-mac-human-v3",
+                        hashlib.sha256).digest()
+                    head = self._append_audit_record(
+                        "human", "add", service, "deny",
+                        f"licence required: agent {agent_id}'s insert "
+                        "was refused — the free entry limit was "
+                        "reached; the submission stays queued",
+                        mac_key=human_key)
+                notified.add(eid)
+            still_queued = set(self._raw_pending)
+            pruned = {e for e in notified
+                      if e in still_queued
+                      or any(e == d[0] for d in denied_now)}
+            if pruned != set(self.get_setting("licence_denied_pending") or []):
+                self.set_setting("licence_denied_pending", sorted(pruned))
         # Advance the seal to the verified current head and persist if
         # anything changed (migration, pendings, retirements, seal).
         if (self._migrated_from or accepted or retired or self._legacy
-                or recovered or head != self._audit_head):
+                or recovered or denied_now or head != self._audit_head):
             self._audit_head = head
             self._persist()
         else:
@@ -1168,6 +1266,7 @@ class MyKey:
         Anything else stays in _raw_pending, untouched, for the human
         to inspect — it is never silently dropped and never trusted.
         """
+        self._pending_licence_denied = []
         if not self._raw_pending:
             return
         accepted = []
@@ -1208,6 +1307,17 @@ class MyKey:
                    and e["username"] == entry["username"]
                    for e in self._entries):
                 continue  # insert-only: never overwrite a human entry
+            # Licensing wave: an agent insert creates an entry, so
+            # the free entry cap applies to it exactly as to a
+            # manual add. The verified submission stays queued —
+            # never dropped, never trusted — and the denial is
+            # recorded in the audit log by _finish_human_unlock.
+            from licensing import entry_cap_reached
+
+            if entry_cap_reached(self):
+                self._pending_licence_denied.append(
+                    (eid, agent_id, entry["service"]))
+                continue
             self._deks[eid] = {"pw": dek_pw, "totp": dek_totp}
             self._origins[eid] = f"agent:{agent_id}"
             self._entries.append(entry)
@@ -1291,6 +1401,22 @@ class MyKey:
             self.unlock()
         return self._entries
 
+    # -- vault settings (encrypted core, free-form) -------------------
+    def get_setting(self, key, default=None):
+        """Read one vault setting. Settings live only inside the
+        encrypted core; on a locked vault this returns the default."""
+        if not isinstance(self._settings, dict):
+            return default
+        return self._settings.get(key, default)
+
+    def set_setting(self, key, value):
+        """Write one vault setting (in memory; the caller persists,
+        as with every other core mutation)."""
+        self._require_unlocked()
+        if not isinstance(self._settings, dict):
+            self._settings = {}
+        self._settings[key] = value
+
     # -- generation ------------------------------------------------------------
     def generate_password(self, length=16):
         if length < MIN_GENERATED_PASSWORD_LENGTH:
@@ -1346,6 +1472,12 @@ class MyKey:
             raise ValueError(
                 f"entry already exists: {record['service']} ({record['username']})"
             )
+        # Licensing wave: the free tier caps the entry COUNT (never
+        # any security feature). Edits of existing entries are not
+        # affected — only creating a new one checks for a free slot.
+        from licensing import require_entry_slot
+
+        require_entry_slot(self)
         self._register_new_entry(record)
         entries.append(record)
         self._persist()
@@ -1627,6 +1759,7 @@ class MyKey:
         inst._pairings = {}
         inst._backup_recovery_pub = None
         inst._settings = {"default_rotate_days": DEFAULT_ROTATE_DAYS}
+        inst._pending_licence_denied = []
         inst._principal = None
         if len(new_master_password) < MIN_MASTER_PASSWORD_LENGTH:
             raise ValueError(
@@ -1700,10 +1833,32 @@ class MyKey:
     # -- import ----------------------------------------------------------------------
     def import_entries(self, records, on_conflict="skip"):
         self._require_human("import entries")
-        from importers import resolve_import
+        from importers import _key as _import_key, resolve_import
 
         existing = [dict(e) for e in self._require_unlocked()]
         merged, stats = resolve_import(records, existing, on_conflict=on_conflict)
+        stats["held_back"] = 0
+        # Licensing wave: an unlicensed vault imports only up to
+        # the free entry limit. resolve_import appends every new
+        # record after the existing prefix, in order — trim the
+        # tail beyond the allowance and report exactly how many
+        # were held back (the caller tells the user to enter a
+        # licence and import the same file again for the rest).
+        from licensing import entry_allowance
+
+        allowance = entry_allowance(self)
+        if allowance is not None:
+            appended = merged[len(existing):]
+            if len(appended) > allowance:
+                held = appended[allowance:]
+                existing_keys = {_import_key(e) for e in existing}
+                for record in held:
+                    if _import_key(record) in existing_keys:
+                        stats["kept_both"] -= 1
+                    else:
+                        stats["added"] -= 1
+                stats["held_back"] = len(held)
+                merged = merged[:len(existing)] + appended[:allowance]
         if stats["added"] or stats["overwritten"] or stats["kept_both"]:
             merged = [_normalize_entry(e) for e in merged]
             # An import overwrite replaces the password with one of

@@ -85,6 +85,13 @@ _ALLOWED_URLS = {
     "http://www.apache.org/licenses/LICENSE-2.0",
     "https://nrupalakolkar.com",
     "https://muse.ai/join",
+    # Licensing wave amendment, in the same change, per this
+    # gate's own rule: the brand-configured Buy / Tip destinations
+    # (brand.py builds them from the bare DOMAIN constant). Like
+    # the attribution links, they open only on the user's own
+    # click in the system browser — the app fetches nothing, ever.
+    "https://{DOMAIN}/buy",
+    "https://{DOMAIN}/tip",
 }
 
 

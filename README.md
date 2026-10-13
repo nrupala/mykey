@@ -47,6 +47,16 @@ pip install cryptography argon2-cffi pyperclip
     Nothing nags you: when you unlock, a calm count shows how many passwords are due, and the rotation view (CLI: `rotation`; GUI: Vault → Password rotation) lists what is due soon or overdue. Changed a password on the website itself? "Mark as changed today" (CLI: `mark-changed`) restarts that entry's clock without touching the stored password.
     The dates live inside the encrypted vault, next to the passwords themselves — never in a separate readable file. Notifications are not sent in this version.
 
+## Free version & licence
+MyKey is free for up to 50 passwords and 4 connections (devices,
+agents and paired browsers in one shared pool, counted per vault).
+A one-time licence key unlocks unlimited passwords and 20
+connections. The limit counts storage only — encryption, sync,
+backups, export and every other security feature are never gated.
+A vault already over the limit still opens and works fully; only
+adding pauses. Full details in plain language: [LICENCE.md](LICENCE.md).
+
+
 # Security Policy
 If you find a vulnerability, please do not open a public issue. 
 Email the maintainer directly at [nrupalakolkar@gmail.com] to ensure a coordinated fix.
