@@ -34,6 +34,18 @@ def _print_entry(e):
           f"{'  ★' if e['favourite'] else ''}")
 
 
+def _load_identity(args):
+    """Load this device's identity, or None (error already shown)."""
+    import devices
+
+    path = args.device_keys or devices.default_device_keys_path()
+    try:
+        return devices.DeviceIdentity.load(path)
+    except devices.DeviceError as exc:
+        print(f"❌ {exc}", file=sys.stderr)
+        return None
+
+
 def main():
     p = argparse.ArgumentParser(
         description=f"{brand.PRODUCT_NAME}: {brand.PRODUCT_TAGLINE}"
@@ -49,6 +61,12 @@ def main():
         "agent-enroll", "agent-revoke", "agent-disable", "agent-enable",
         "agents", "agent-audit", "agent-audit-reset",
         "rotate-vault-key",
+        # Phase 3A: device identity, user-cloud sync, backup packages.
+        "device-init", "device-card", "device-enroll", "devices",
+        "device-revoke",
+        "sync-configure", "sync-status", "sync-push", "sync-pull",
+        "sync-snapshots", "sync-restore", "sync-pin",
+        "backup-export", "backup-import", "backup-inspect",
     ])
     p.add_argument("--agent-id", help="Agent id (agent-enroll/-revoke/...)")
     p.add_argument("--scopes", default="",
@@ -69,6 +87,26 @@ def main():
                    default="skip")
     p.add_argument("--dry-run", action="store_true", help="Import preview only")
     p.add_argument("--query", default="")
+    # Phase 3A arguments.
+    p.add_argument("--folder", help="Sync folder (sync-configure)")
+    p.add_argument("--card", help="Device card JSON file (device-enroll)")
+    p.add_argument("--device", help="Device id (device-revoke)")
+    p.add_argument("--label", default="", help="Device label (device-init)")
+    p.add_argument("--device-keys",
+                   help="Device key file path (default: ~/.mykey/device-keys.json)")
+    p.add_argument("--self", dest="self_enroll", action="store_true",
+                   help="Enroll THIS device (device-enroll)")
+    p.add_argument("--yes", action="store_true",
+                   help="Confirm a device enrollment without prompting")
+    p.add_argument("--force", action="store_true",
+                   help="Force a sync push/pull/restore (human unlock required)")
+    p.add_argument("--snapshot", help="Bundle hash to restore (sync-restore)")
+    p.add_argument("--expect-fingerprint",
+                   help="Source fingerprint obtained independently (backup-import)")
+    p.add_argument("--allow-older", action="store_true",
+                   help="Allow importing an older backup package")
+    p.add_argument("--recovery", action="store_true",
+                   help="Open the package with the recovery phrase (backup-import)")
     args = p.parse_args()
 
     if args.action == "gen" and args.len < MIN_GENERATED_PASSWORD_LENGTH:
@@ -107,6 +145,129 @@ def main():
                 # human scoped for it; the purpose of 'agent-get'.
                 # codeql[py/clear-text-logging-sensitive-data]
                 print(f"🔑 {e['service']} ({e['username']}): {e['password']}")
+            return 0
+
+        # ---- Phase 3A surfaces that never decrypt the vault --------
+        if args.action == "device-init":
+            import devices
+
+            path = args.device_keys or devices.default_device_keys_path()
+            if os.path.exists(path) and not args.force:
+                print(f"❌ A device identity already exists at {path}. "
+                      "Use --force to replace it — the new identity "
+                      "cannot open backups wrapped to the old one.",
+                      file=sys.stderr)
+                return 2
+            identity = devices.DeviceIdentity.generate(args.label)
+            identity.save(path)
+            print(f"🖥  Device identity created: {identity.device_id}")
+            print(f"    Fingerprint: {identity.fingerprint}")
+            print(f"    Keys: {path} (mode 0600 — protect this file; "
+                  "it is never synced)")
+            return 0
+
+        if args.action == "device-card":
+            identity = _load_identity(args)
+            if identity is None:
+                return 2
+            card = json.dumps(identity.card(), indent=1)
+            if args.file:
+                with open(args.file, "w", encoding="utf-8") as f:
+                    f.write(card + "\n")
+                os.chmod(args.file, 0o600)
+                print(f"📇 Card written to {args.file}")
+            else:
+                print(card)
+            print(f"Fingerprint (compare out-of-band): {identity.fingerprint}",
+                  file=sys.stderr)
+            return 0
+
+        if args.action == "backup-inspect":
+            from backup_pkg import inspect_package
+
+            info = inspect_package(args.file)
+            for key, value in info.items():
+                print(f"{key}: {value}")
+            return 0 if info["signature_valid"] else 1
+
+        if args.action in ("sync-configure", "sync-status",
+                           "sync-snapshots"):
+            import vaultsync
+
+            sync = vaultsync.VaultSync(args.vault)
+            if args.action == "sync-configure":
+                if not args.folder:
+                    print("❌ --folder required", file=sys.stderr)
+                    return 2
+                identity = _load_identity(args)
+                if identity is None:
+                    return 2
+                sync.configure(args.folder, identity,
+                               device_keys_path=args.device_keys)
+                print(f"🔄 Sync configured: folder {args.folder}")
+            elif args.action == "sync-status":
+                for key, value in sync.status().items():
+                    print(f"{key}: {value}")
+            else:
+                snaps = sync.list_snapshots()
+                for s in snaps["provider"]:
+                    print(f"remote  gen={s['generation']}  {s['bundle_hash'][:16]}…"
+                          f"  kind={s['kind']}  device={s['device_id'][:8]}…")
+                for name in snaps["local"]:
+                    print(f"local   {name}")
+            return 0
+
+        if args.action in ("sync-push", "sync-pull") and not args.force:
+            import vaultsync
+
+            sync = vaultsync.VaultSync(args.vault)
+            if args.action == "sync-push":
+                identity = _load_identity(args)
+                if identity is None:
+                    return 2
+                result = sync.push(identity)
+            else:
+                result = sync.pull()
+            print(f"🔄 {args.action}: {json.dumps(result)}")
+            return 0
+
+        if args.action == "backup-import":
+            import backup_pkg
+            import devices as devices_mod
+
+            identity = None
+            keys_path = args.device_keys or \
+                devices_mod.default_device_keys_path()
+            if os.path.exists(keys_path):
+                identity = _load_identity(args)
+                if identity is None:
+                    return 2
+            registry = None
+            if os.path.exists(args.vault):
+                print("A vault exists at the target — unlocking it to "
+                      "check the package's source against its registry.")
+                master = getpass.getpass("Enter Master Password: ")
+                probe = MyKey(master, vault_file=args.vault)
+                probe.unlock()
+                registry = probe._devices
+            phrase = None
+            if args.recovery:
+                phrase = getpass.getpass("Recovery phrase: ")
+            expect = args.expect_fingerprint
+            if registry is None and not expect:
+                expect = input("Source device fingerprint (read it on "
+                               "the source device, not from the package): "
+                               ).strip()
+            result = backup_pkg.import_package(
+                args.file, args.vault, identity=identity,
+                recovery_phrase=phrase, expect_fingerprint=expect,
+                allow_older=args.allow_older, registry=registry)
+            print(f"📦 Backup imported via {result['via']} — "
+                  f"vault {result['vault_id'][:12]}… is in place. "
+                  "Unlock it with its master password as usual.")
+            if result["snapshot_of_previous"]:
+                print(f"    Previous vault preserved at: "
+                      f"{result['snapshot_of_previous']}")
             return 0
 
         if args.action == "recovery-unlock":
@@ -195,6 +356,112 @@ def main():
                 elif args.action == "agent-enable":
                     set_agent_enabled(app, args.agent_id, True)
                     print(f"▶️ Agent '{args.agent_id}' enabled.")
+            return 0
+
+        # ---- Phase 3A human-gated surfaces -------------------------
+        if args.action in ("device-enroll", "devices", "device-revoke",
+                           "backup-export", "sync-pin", "sync-restore") or \
+                (args.action in ("sync-push", "sync-pull") and args.force):
+            import devices as devices_mod
+            import vaultsync
+
+            app.unlock()  # human principal from here on
+            sync = vaultsync.VaultSync(args.vault)
+
+            def _refresh_pins():
+                state = vaultsync.load_state(args.vault)
+                if state is not None:
+                    vaultsync.refresh_pins(app, state)
+                    vaultsync.save_state(args.vault, state)
+
+            if args.action == "devices":
+                for d in devices_mod.list_devices(app):
+                    state = "REVOKED" if d["revoked_at"] else "active"
+                    print(f"- {d['device_id'][:12]}…  [{state}]  "
+                          f"{d['label'] or '-'}  fp={d['fingerprint']}")
+            elif args.action == "device-enroll":
+                if args.self_enroll:
+                    identity = _load_identity(args)
+                    if identity is None:
+                        return 2
+                    card = identity.card()
+                elif args.card:
+                    card = json.loads(
+                        open(args.card, encoding="utf-8").read())
+                else:
+                    print("❌ --self or --card FILE required",
+                          file=sys.stderr)
+                    return 2
+                record = devices_mod.verify_card(card)
+                print(f"Enrolling device {record['device_id']}")
+                print(f"    Fingerprint: {record['fingerprint']}")
+                print("    Only proceed if that fingerprint matches "
+                      "what the device itself shows.")
+                if not args.yes and not args.self_enroll:
+                    answer = input("Type 'yes' to enroll: ").strip()
+                    if answer != "yes":
+                        print("Aborted.")
+                        return 1
+                devices_mod.enroll_device(app, card)
+                _refresh_pins()
+                print("✅ Device enrolled. It becomes a recipient of "
+                      "new backup packages, and its sync commits can "
+                      "be verified against the registry.")
+            elif args.action == "device-revoke":
+                if not args.device:
+                    print("❌ --device required", file=sys.stderr)
+                    return 2
+                full = next((d for d in app._devices
+                             if d.startswith(args.device)), args.device)
+                devices_mod.revoke_device(app, full)
+                _refresh_pins()
+                print(f"🗑 Device {full[:12]}… revoked. New backup "
+                      "packages exclude it; packages already exported "
+                      "stay openable by a key it retained (see "
+                      "SYNC_BACKUP.md).")
+            elif args.action == "backup-export":
+                if not args.file:
+                    print("❌ --file required", file=sys.stderr)
+                    return 2
+                from backup_pkg import export_package
+
+                identity = _load_identity(args)
+                if identity is None:
+                    return 2
+                package = export_package(app, identity, out_path=args.file)
+                names = [r.get("device_id", "recovery")[:12] + "…"
+                         if r["type"] == "device" else "recovery phrase"
+                         for r in package["recipients"]]
+                print(f"📦 Backup package written: {args.file}")
+                print(f"    Recipients: {', '.join(names)}")
+                print("    The package is ciphertext — safe to store "
+                      "or send. Keep it like a vault copy.")
+            elif args.action == "sync-pin":
+                state = vaultsync.load_state(args.vault)
+                if state is None:
+                    print("❌ sync is not configured", file=sys.stderr)
+                    return 2
+                vaultsync.refresh_pins(app, state)
+                vaultsync.save_state(args.vault, state)
+                print("📌 Signer keys pinned from the vault registry.")
+            elif args.action == "sync-restore":
+                if not args.snapshot:
+                    print("❌ --snapshot BUNDLE_HASH required",
+                          file=sys.stderr)
+                    return 2
+                result = sync.restore(args.snapshot, human_unlocked=True)
+                print(f"🔄 Restored snapshot {result['bundle_hash'][:16]}… "
+                      "Publishing it again needs sync-push --force.")
+            elif args.action == "sync-push":  # --force (gate above)
+                identity = _load_identity(args)
+                if identity is None:
+                    return 2
+                result = sync.push(identity, force=True,
+                                   human_unlocked=True)
+                print(f"🔄 sync-push: {json.dumps(result)}")
+            elif args.action == "sync-pull":  # --force (gate above)
+                result = sync.pull(force=True, human_unlocked=True)
+                print(f"🔄 sync-pull: {json.dumps(result)}")
             return 0
 
         if args.action == "gen":

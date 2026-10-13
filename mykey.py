@@ -307,6 +307,11 @@ class MyKey:
         self._audit_mac_since = 0       # chain index where MACs begin
         self._anchor_recovery = False   # set only by the reset flow
         self._raw_pending = {}          # entry id -> unprocessed entry object
+        # Phase 3A: device registry (device id -> public identity
+        # record) and the recovery backup recipient public key. Both
+        # live only inside the encrypted core, like the agent registry.
+        self._devices = {}
+        self._backup_recovery_pub = None
         # "human" once unlocked by master/recovery; "agent:<id>" for an
         # agent session. Human-only operations check this.
         self._principal = None
@@ -444,6 +449,10 @@ class MyKey:
             "retired_audit_keys": self._retired_audit_keys,
             "retired_pending_keys": self._retired_pending_keys,
             "audit_mac_since": self._audit_mac_since,
+            "devices": self._devices,
+            "backup_recovery_pub": (
+                _b64e(self._backup_recovery_pub)
+                if self._backup_recovery_pub else None),
         }
 
     def _entry_object(self, entry):
@@ -566,6 +575,10 @@ class MyKey:
         self._retired_audit_keys = core.get("retired_audit_keys") or {}
         self._retired_pending_keys = core.get("retired_pending_keys") or {}
         self._audit_mac_since = int(core.get("audit_mac_since") or 0)
+        # Phase 3A fields; absent in cores written before 3A.
+        self._devices = core.get("devices") or {}
+        raw_pub = core.get("backup_recovery_pub")
+        self._backup_recovery_pub = _b64d(raw_pub) if raw_pub else None
 
     def _decrypt_v3_contents(self, data):
         try:
@@ -890,6 +903,8 @@ class MyKey:
         self._retired_audit_keys = {}
         self._retired_pending_keys = {}
         self._entry_hashes = {}
+        self._devices = {}
+        self._backup_recovery_pub = None
         self._migrated_from = from_version
         self._principal = "human"
         return self._finish_human_unlock(entries)
@@ -1230,11 +1245,17 @@ class MyKey:
     # -- recovery slots -----------------------------------------------------------
     def setup_recovery(self, strength=128):
         """Create a BIP-39 recovery slot. Returns the phrase (show once)."""
-        from recovery import derive_recovery_key, generate_mnemonic
+        from recovery import (derive_recovery_key, generate_mnemonic,
+                              recovery_backup_keypair)
 
         self._require_human("manage recovery")
         self._require_unlocked()
         phrase = generate_mnemonic(strength)
+        # Phase 3A: the backup-package recovery recipient public key
+        # for THIS vault, derived from the new phrase (the private
+        # half is never stored — it is re-derived from the phrase).
+        _raw, pub = recovery_backup_keypair(phrase, self._vault_id)
+        self._backup_recovery_pub = pub
         self._set_recovery_slot(phrase, derive_recovery_key)
         return phrase
 
@@ -1277,11 +1298,27 @@ class MyKey:
             self._rotate_vk_for_migration(
                 data, vault_key,
                 recovery_wrapping=(wrapping, slot["salt"]))
-            return self._migrate_to_v3(entries, from_version=2)
+            result = self._migrate_to_v3(entries, from_version=2)
+            self._backfill_backup_recovery_pub(phrase)
+            return result
         entries = self._decrypt_v3_contents(data)
         self._legacy = False
         self._principal = "human"
-        return self._finish_human_unlock(entries)
+        result = self._finish_human_unlock(entries)
+        self._backfill_backup_recovery_pub(phrase)
+        return result
+
+    def _backfill_backup_recovery_pub(self, phrase):
+        """Store the Phase 3A backup recovery public key for vaults
+        whose recovery phrase predates 3A. Runs only on a successful
+        recovery unlock (the one human path that holds the phrase)."""
+        if self._backup_recovery_pub is not None:
+            return
+        from recovery import recovery_backup_keypair
+
+        _raw, pub = recovery_backup_keypair(phrase, self._vault_id)
+        self._backup_recovery_pub = pub
+        self._persist()
 
     # -- principal + generic wrapped slots (Phase 2A/2B) -------------------------
     def _require_human(self, action="this operation"):
@@ -1363,6 +1400,8 @@ class MyKey:
         inst._audit_mac_since = 0
         inst._anchor_recovery = False
         inst._raw_pending = {}
+        inst._devices = {}
+        inst._backup_recovery_pub = None
         inst._principal = None
         if len(new_master_password) < MIN_MASTER_PASSWORD_LENGTH:
             raise ValueError(
@@ -1403,6 +1442,7 @@ class MyKey:
             self._retired_audit_keys[agent_id] = rec["audit_mac_key"]
             self._retired_pending_keys[agent_id] = rec["pending_mac_key"]
         self._agents = {}
+        self._backup_recovery_pub = None  # recovery slot is retired below
         self._vault_key = os.urandom(32)
         self._slots = [self._master_slot()]
         self._raw_pending = {}  # unprocessed submissions are discarded
