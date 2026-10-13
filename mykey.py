@@ -27,6 +27,16 @@ Vault v3 is envelope encryption with *per-entry key partitioning*:
   A token holder with the vault file and modified code therefore
   cannot decrypt out-of-scope entries — the keys are not there.
 
+Passkey entries (WebAuthn credentials) are a fourth key class in
+the same scheme: an entry with ``kind == "passkey"`` carries its
+WebAuthn record — including the credential PRIVATE key — in a
+``passkey`` blob under its own per-entry key (DEK_passkey), sealed
+by a hash in the core exactly like the other blobs. DEK_passkey is
+NEVER placed in an agent bundle and passkey entries are excluded
+from bundle targets entirely: agents cannot use passkeys in this
+design (agent passkey use is a later, separately gated feature).
+See PASSKEYS.md.
+
 Vault v2 files are migrated on first human unlock: a backup with
 the agent slots stripped is kept (``<vault>.v2.bak``), entries are
 re-encrypted per-entry, and agent enrollments are retired (a human
@@ -96,7 +106,7 @@ ENTRY_FIELDS = (
 DEFAULT_ROTATE_DAYS = 180
 ROTATION_DUE_SOON_DAYS = 14
 _METADATA_FIELDS = ("service", "username", "url", "tags", "favourite",
-                    "created", "updated", "android_app")
+                    "created", "updated", "android_app", "kind")
 # Hard caps (fleet design review, finding 9): agent-submitted pending
 # material is bounded before any expensive parsing or decryption.
 MAX_PENDING_ENTRIES = 64
@@ -203,6 +213,19 @@ def _entry_hash(entry_obj: dict) -> str:
     return h.hexdigest()
 
 
+def _passkey_hash(blob: dict) -> str:
+    """Hash of one entry's passkey blob, sealed in the core.
+
+    Kept separate from _entry_hash so vaults written before passkey
+    support keep verifying byte-for-byte: their entry hashes cover
+    meta/secret/totp only, exactly as before.
+    """
+    h = hashlib.sha256(b"passkeyhash:v3")
+    h.update(_b64d(blob["nonce"]))
+    h.update(_b64d(blob["ciphertext"]))
+    return h.hexdigest()
+
+
 # ---------------------------------------------------------------------------
 # audit chain primitives (the rich audit API lives in agents.py)
 # ---------------------------------------------------------------------------
@@ -286,6 +309,8 @@ def make_entry(service, password="", username="", url="", notes="",
         "tags": list(tags or []),
         "favourite": bool(favourite),
         "android_app": clean_android_app(android_app),
+        "kind": "login",
+        "passkey": None,
         "created": ts,
         "updated": ts,
         # A password's age clock starts when the entry is created;
@@ -296,6 +321,78 @@ def make_entry(service, password="", username="", url="", notes="",
     for key, value in extra.items():
         if key not in entry:
             entry[key] = value
+    return entry
+
+
+# The WebAuthn record stored (encrypted) in a passkey entry's
+# passkey blob. private_key is PKCS#8 DER (base64); public_key is
+# the raw uncompressed EC point for ES256 (base64) or the raw
+# public key bytes for EdDSA; credential_id / user_id / aaguid are
+# base64. See PASSKEYS.md for the format contract both clients
+# implement identically.
+PASSKEY_RECORD_FIELDS = (
+    "rp_id", "user_id", "user_name", "user_display_name",
+    "credential_id", "alg", "public_key", "private_key",
+    "sign_count", "transports", "created_at", "aaguid",
+    "backup_eligible", "backed_up",
+)
+
+
+def validate_passkey_record(record):
+    """Validate + normalize a passkey record dict. Raises ValueError."""
+    if not isinstance(record, dict):
+        raise ValueError("passkey record must be a dict")
+    rp_id = record.get("rp_id")
+    if not isinstance(rp_id, str) or not rp_id:
+        raise ValueError("passkey record needs a non-empty rp_id")
+    for field in ("credential_id", "public_key", "private_key"):
+        raw = record.get(field)
+        if not isinstance(raw, str) or not raw:
+            raise ValueError(f"passkey record needs {field} (base64)")
+        try:
+            _b64d(raw)
+        except Exception as exc:
+            raise ValueError(f"passkey {field} is not valid base64") from exc
+    out = {
+        "rp_id": rp_id,
+        "user_id": record.get("user_id", ""),
+        "user_name": record.get("user_name", ""),
+        "user_display_name": record.get("user_display_name", ""),
+        "credential_id": record["credential_id"],
+        "alg": int(record.get("alg", -7)),
+        "public_key": record["public_key"],
+        "private_key": record["private_key"],
+        "sign_count": int(record.get("sign_count", 0)),
+        "transports": list(record.get("transports") or ["internal"]),
+        "created_at": int(record.get("created_at") or _now()),
+        "aaguid": record.get("aaguid", _b64e(bytes(16))),
+        "backup_eligible": bool(record.get("backup_eligible", True)),
+        "backed_up": bool(record.get("backed_up", True)),
+    }
+    if out["sign_count"] < 0:
+        raise ValueError("passkey sign_count cannot be negative")
+    return out
+
+
+def make_passkey_entry(record, notes=""):
+    """Build an entry dict of kind "passkey" from a WebAuthn record.
+
+    The entry's service is the relying-party id and its username is
+    the WebAuthn user name, so listing/search/delete behave exactly
+    as for logins. The password field stays empty — the credential
+    private key lives only in the encrypted passkey blob.
+    """
+    rec = validate_passkey_record(record)
+    entry = make_entry(
+        service=rec["rp_id"],
+        password="",
+        username=rec["user_name"],
+        notes=notes,
+    )
+    entry["kind"] = "passkey"
+    entry["passkey"] = rec
+    entry["created"] = rec["created_at"]
+    entry["updated"] = rec["created_at"]
     return entry
 
 
@@ -323,6 +420,8 @@ def _normalize_entry(raw):
     entry["password_set_at"] = int(psa) if psa is not None else None
     rotate_days = raw.get("rotate_days")
     entry["rotate_days"] = int(rotate_days) if rotate_days is not None else None
+    entry["kind"] = raw.get("kind", "login")
+    entry["passkey"] = raw.get("passkey")
     return entry
 
 
@@ -424,9 +523,10 @@ class MyKey:
         self._agents = {}
         self._audit_head = ""
         self._kmeta = None
-        self._deks = {}          # entry id -> {"pw": bytes, "totp": bytes|None}
+        self._deks = {}          # entry id -> {"pw", "totp", "passkey"} keys
         self._origins = {}       # entry id -> "human" | "agent:<id>"
         self._entry_hashes = {}  # entry id -> committed ciphertext hash
+        self._passkey_hashes = {}  # entry id -> sealed passkey blob hash
         self._inbox_priv = None
         self._inbox_pub = None
         self._vault_id = ""
@@ -583,11 +683,14 @@ class MyKey:
             "kmeta": _b64e(self._kmeta),
             "deks": {
                 eid: {"pw": _b64e(d["pw"]),
-                      "totp": _b64e(d["totp"]) if d.get("totp") else None}
+                      "totp": _b64e(d["totp"]) if d.get("totp") else None,
+                      "passkey": (_b64e(d["passkey"])
+                                  if d.get("passkey") else None)}
                 for eid, d in self._deks.items()
             },
             "origins": self._origins,
             "entry_hashes": self._entry_hashes,
+            "passkey_hashes": self._passkey_hashes,
             "inbox_priv": _b64e(self._inbox_priv),
             "vault_id": self._vault_id,
             "anchor_seq": self._anchor_seq,
@@ -616,12 +719,22 @@ class MyKey:
                 "rotate_days": entry.get("rotate_days"),
             }).encode(), _aad("secret", eid)),
             "totp": None,
+            "passkey": None,
             "pending": None,
         }
         if entry.get("totp_secret"):
             obj["totp"] = _enc(deks["totp"], json.dumps({
                 "totp_secret": entry["totp_secret"],
             }).encode(), _aad("totp", eid))
+        if entry.get("kind") == "passkey" and entry.get("passkey"):
+            if not deks.get("passkey"):
+                raise VaultCorrupt(
+                    f"passkey entry {eid} has no passkey data key")
+            obj["passkey"] = _enc(
+                deks["passkey"],
+                json.dumps(entry["passkey"]).encode(),
+                _aad("passkey", eid))
+            self._passkey_hashes[eid] = _passkey_hash(obj["passkey"])
         self._entry_hashes[eid] = _entry_hash(obj)
         return obj
 
@@ -657,6 +770,12 @@ class MyKey:
             targets = {}
             services = {}
             for entry in self._entries or []:
+                # Passkey entries are NEVER agent targets: their
+                # private keys sit under DEK_passkey, which no bundle
+                # carries, and agents get no handle on the entry at
+                # all (agent passkey use is a later, gated design).
+                if entry.get("kind") == "passkey":
+                    continue
                 if self._scope_covers_entry(scopes, entry):
                     targets[entry["id"]] = {
                         "dek_pw": _b64e(self._deks[entry["id"]]["pw"]),
@@ -713,11 +832,15 @@ class MyKey:
         self._kmeta = _b64d(core["kmeta"])
         self._deks = {
             eid: {"pw": _b64d(d["pw"]),
-                  "totp": _b64d(d["totp"]) if d.get("totp") else None}
+                  "totp": _b64d(d["totp"]) if d.get("totp") else None,
+                  "passkey": (_b64d(d["passkey"])
+                              if d.get("passkey") else None)}
             for eid, d in (core.get("deks") or {}).items()
         }
         self._origins = core.get("origins") or {}
         self._entry_hashes = core.get("entry_hashes") or {}
+        # Passkey-wave field; absent in cores written before it.
+        self._passkey_hashes = core.get("passkey_hashes") or {}
         self._inbox_priv = _b64d(core["inbox_priv"])
         self._vault_id = core.get("vault_id") or ""
         self._anchor_seq = int(core.get("anchor_seq") or 0)
@@ -779,10 +902,33 @@ class MyKey:
                     totp = json.loads(_dec(
                         self._deks[eid]["totp"], obj["totp"], _aad("totp", eid)))
                     totp_secret = totp.get("totp_secret", "")
+                passkey = None
+                if obj.get("passkey") is not None:
+                    # Same sealed-hash discipline as the other blobs:
+                    # a passkey blob without its core-sealed hash, or
+                    # with a mismatching one, fails the unlock closed.
+                    sealed = self._passkey_hashes.get(eid)
+                    if sealed is None or not hmac.compare_digest(
+                            sealed, _passkey_hash(obj["passkey"])):
+                        raise VaultCorrupt(
+                            f"entry {eid} passkey ciphertext does not "
+                            "match the hash sealed in the vault core")
+                    dek_passkey = self._deks[eid].get("passkey")
+                    if dek_passkey is None:
+                        raise VaultCorrupt(
+                            f"entry {eid} has a passkey blob but no "
+                            "passkey data key in the core")
+                    passkey = validate_passkey_record(json.loads(_dec(
+                        dek_passkey, obj["passkey"], _aad("passkey", eid))))
+            except VaultCorrupt:
+                raise
             except Exception as exc:
                 raise VaultCorrupt(f"entry {eid} failed to decrypt") from exc
             entry = _normalize_entry({**meta, **secret,
                                       "totp_secret": totp_secret, "id": eid})
+            if passkey is not None:
+                entry["kind"] = "passkey"
+                entry["passkey"] = passkey
             entries.append(entry)
         return entries
 
@@ -910,9 +1056,11 @@ class MyKey:
         for eid in entry_ids:
             if eid in self._deks:
                 totp = self._deks[eid].get("totp")
+                passkey = self._deks[eid].get("passkey")
                 self._deks[eid] = {
                     "pw": os.urandom(32),
                     "totp": os.urandom(32) if totp else None,
+                    "passkey": os.urandom(32) if passkey else None,
                 }
         if rotate_kmeta:
             self._kmeta = os.urandom(32)
@@ -932,6 +1080,8 @@ class MyKey:
             self._deks[e["id"]] = {
                 "pw": os.urandom(32),
                 "totp": os.urandom(32) if e.get("totp_secret") else None,
+                "passkey": (os.urandom(32)
+                            if e.get("kind") == "passkey" else None),
             }
             self._origins[e["id"]] = "human"
 
@@ -1153,6 +1303,7 @@ class MyKey:
         self._retired_audit_keys = {}
         self._retired_pending_keys = {}
         self._entry_hashes = {}
+        self._passkey_hashes = {}
         self._devices = {}
         self._pairings = {}
         self._backup_recovery_pub = None
@@ -1458,6 +1609,8 @@ class MyKey:
         self._deks[record["id"]] = {
             "pw": os.urandom(32),
             "totp": os.urandom(32) if record.get("totp_secret") else None,
+            "passkey": (os.urandom(32)
+                        if record.get("kind") == "passkey" else None),
         }
         self._origins[record["id"]] = (
             "human" if self._principal in (None, "human")
@@ -1517,6 +1670,7 @@ class MyKey:
         self._deks.pop(removed["id"], None)
         self._origins.pop(removed["id"], None)
         self._entry_hashes.pop(removed["id"], None)
+        self._passkey_hashes.pop(removed["id"], None)
         self._persist()
         return dict(removed)
 
@@ -1580,6 +1734,57 @@ class MyKey:
         """How many entries are due soon or overdue right now."""
         return sum(1 for r in self.rotation_report(now=now)
                    if r["state"] in ("due_soon", "overdue"))
+    # -- passkeys ---------------------------------------------------------
+    def add_passkey(self, record, notes=""):
+        """Store a WebAuthn passkey record as a new entry.
+
+        Human only. The record (see validate_passkey_record) carries
+        the credential private key; it is encrypted under a fresh
+        per-entry DEK_passkey on the next persist and never appears
+        in any agent bundle.
+
+        Licensing seam: passkeys are ordinary entries in the entry
+        list, so the free-tier entry cap counts them exactly like
+        logins; when the cap is enforced at the admission points it
+        must gate this method together with add_entry.
+        """
+        self._require_human("add passkeys")
+        entries = self._require_unlocked()
+        entry = make_passkey_entry(record, notes=notes)
+        if self._find_index(entry["service"], entry["username"]) >= 0:
+            raise ValueError(
+                f"entry already exists: {entry['service']} "
+                f"({entry['username']})"
+            )
+        self._register_new_entry(entry)
+        entries.append(entry)
+        self._persist()
+        return dict(entry)
+
+    def list_passkeys(self):
+        """All passkey entries (metadata + record), human view."""
+        return [dict(e) for e in self._require_unlocked()
+                if e.get("kind") == "passkey"]
+
+    def set_passkey_sign_count(self, entry_id, sign_count):
+        """Persist a new authenticator sign count for a passkey.
+
+        The count only ever moves forward here: a lower value is
+        refused, so a stale session cannot rewind clone detection.
+        """
+        self._require_human("update passkeys")
+        for entry in self._require_unlocked():
+            if entry["id"] == entry_id and entry.get("kind") == "passkey":
+                current = int(entry["passkey"]["sign_count"])
+                if int(sign_count) < current:
+                    raise ValueError(
+                        "sign_count cannot move backwards "
+                        f"({current} -> {sign_count})")
+                entry["passkey"]["sign_count"] = int(sign_count)
+                entry["updated"] = _now()
+                self._persist()
+                return dict(entry)
+        raise KeyError(f"no passkey entry: {entry_id}")
 
     # -- Phase 0 compatible API ------------------------------------------------
     def save_password(self, service, password, **fields):
@@ -1745,6 +1950,7 @@ class MyKey:
         inst._deks = {}
         inst._origins = {}
         inst._entry_hashes = {}
+        inst._passkey_hashes = {}
         inst._inbox_priv = None
         inst._inbox_pub = None
         inst._vault_id = ""
@@ -1835,8 +2041,27 @@ class MyKey:
         self._require_human("import entries")
         from importers import _key as _import_key, resolve_import
 
-        existing = [dict(e) for e in self._require_unlocked()]
+        # Passkey entries are not import targets: a CSV/login record
+        # that collides with a passkey's (service, username) is a
+        # skipped conflict, never an overwrite — a passkey entry must
+        # not grow a password by being merged with a login record.
+        all_entries = [dict(e) for e in self._require_unlocked()]
+        passkeys = [e for e in all_entries if e.get("kind") == "passkey"]
+        passkey_keys = {(e["service"].lower(), e["username"].lower())
+                        for e in passkeys}
+        blocked = [r for r in records
+                   if (str(r.get("service", "")).lower(),
+                       str(r.get("username", "")).lower()) in passkey_keys]
+        records = [r for r in records
+                   if (str(r.get("service", "")).lower(),
+                       str(r.get("username", "")).lower())
+                   not in passkey_keys]
+        existing = [e for e in all_entries if e.get("kind") != "passkey"]
         merged, stats = resolve_import(records, existing, on_conflict=on_conflict)
+        if blocked:
+            stats["conflicts"] = stats.get("conflicts", 0) + len(blocked)
+            stats["skipped_conflicts"] = (stats.get("skipped_conflicts", 0)
+                                          + len(blocked))
         stats["held_back"] = 0
         # Licensing wave: an unlicensed vault imports only up to
         # the free entry limit. resolve_import appends every new
@@ -1870,6 +2095,10 @@ class MyKey:
                 if (record["id"] in before
                         and record["password"] != before[record["id"]]):
                     record["password_set_at"] = None
+            # Passkey entries were partitioned out of the import
+            # entirely (never overwritten, never merged into) and
+            # ride along untouched.
+            merged = merged + passkeys
             existing_ids = {e["id"] for e in self._entries}
             for record in merged:
                 if record["id"] not in existing_ids:
@@ -1891,6 +2120,11 @@ class MyKey:
             writer = csv.writer(f)
             writer.writerow(["Service", "Username", "Password", "URL", "Notes"])
             for e in entries:
+                # Passkeys have no CSV representation (passkey
+                # transfer is the separate CXP/CXF standard, out of
+                # scope) — they are never flattened into a CSV row.
+                if e.get("kind") == "passkey":
+                    continue
                 writer.writerow([e["service"], e["username"], e["password"], e["url"], e["notes"]])
         os.chmod(path, 0o600)
         return True, "Exported!"

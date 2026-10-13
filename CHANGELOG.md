@@ -95,6 +95,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   holds exactly what MyKey put there, closing the window clears a
   pending copied secret immediately, and a re-copy restarts the
   timer. The CLI and MCP surfaces never touch the clipboard.
+### Added — Passkey wave: WebAuthn passkey storage (desktop role)
+- **Passkey entries in Vault v3.** A new entry kind `"passkey"`
+  stores a WebAuthn record (rp_id, user info, credential id,
+  public key, credential **private key**, sign_count) in its own
+  blob under a new per-entry key class (DEK_passkey), sealed by a
+  hash in the core's new `passkey_hashes` map. `_entry_hash` is
+  unchanged, so existing vaults verify byte-for-byte. Format
+  contract and limits: `PASSKEYS.md`.
+- **Agents can never touch passkeys.** DEK_passkey is never in a
+  bundle; passkey entries are excluded from bundle targets and
+  service maps. Agent passkey use is a later, separately gated
+  design (not built).
+- **Desktop is read + delete in v1:** CLI `passkeys` lists them,
+  `get` prints a public summary only, the GUI marks them
+  "use the phone app". Creation/use live in the mobile client
+  (authenticator + Android Credential Manager provider).
+- CSV export skips passkeys; CSV import never overwrites one.
+  Passkeys count toward the entry total like logins (the
+  free-tier cap seam is noted at `add_passkey`).
 
 ### Added — Blob wave: two-factor backup packages + key-value pairing
 - **MKBAK v2 — two-factor recovery.** New backup packages wrap
