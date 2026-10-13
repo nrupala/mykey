@@ -15,7 +15,12 @@ mykey is a stateless, local-first password generator and vault. It ensures that 
     **🍁100% Canadian Built🍁**: Developed with a focus on digital sovereignty.
     
     
-🛠️ Installation
+⬇️ Download
+    Ready-made builds are on the Releases page: https://github.com/nrupala/mykey/releases — a Windows app (.exe), a Windows command-line tool, and a Linux bundle (.tar.gz) with a desktop launcher. The phone app lives in the mykey-mobile repo.
+    These builds are not code-signed yet. On Windows, SmartScreen will say "Windows protected your PC" the first time you run the app — click "More info", then "Run anyway". SHA-256 checksums are published with each release so you can verify your download.
+    macOS: no ready-made download yet. Run packaging/build_desktop.py on a Mac to build MyKey.app yourself (see packaging/README.md).
+
+🛠️ Installation (from source)
 ```bash
 git clone https://github.com/nrupala/mykey
 cd mykey

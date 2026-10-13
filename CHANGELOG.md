@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — desktop downloads (packaging wave, 2026-10-13)
+- Ready-made desktop builds published on the Releases page as
+  **v2.2.0**: Windows app + CLI `.exe` (built and smoke-tested on a
+  real Windows 11 machine), Linux bundle (app + CLI +
+  `mykey.desktop` launcher + docs). Builds are **unsigned** for
+  now — the release notes say so in plain words and publish
+  SHA-256 checksums.
+- `packaging/build_desktop.py`: one PyInstaller build script for
+  Windows/Linux/macOS (runs on the target platform; macOS yields
+  `MyKey.app` — script-only until a signing certificate exists,
+  no `.dmg` is published). Build notes and the smoke-test
+  checklist live in `packaging/README.md`.
+
+### Fixed — Windows CLI in pipes and legacy consoles
+- Secret prompts (master password, recovery phrase, entry
+  password) no longer go through `getpass` when stdin is piped:
+  on Windows (CPython 3.14) getpass's redirected-stdin path
+  leaves the interpreter hanging at exit (`_enter_buffered_busy`
+  on `<stdin>`) — reproduced with `getpass` alone during the
+  packaging smoke test. New `_prompt_secret` helper in the CLI:
+  interactive terminal → `getpass` as before; piped stdin → one
+  line read from stdin. This is the scripted/agent (MACHINE)
+  path, so piped use on Windows now exits cleanly.
+- CLI output is forced to UTF-8 at startup: Windows legacy code
+  pages cannot encode the CLI's status glyphs (🔑/✅/❌) and
+  crashed commands mid-print (e.g. `agent-get` on a cp1252 pipe).
+
 ### Fixed — expiry validation for agents and pairings (issue #12)
 - `agent-enroll --expires-days 0` no longer silently creates a
   never-expiring token: 0 came through a falsy check as "unset".
