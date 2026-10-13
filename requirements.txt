@@ -1,3 +1,3 @@
-cryptography
-argon2-cffi
-pyperclip
+cryptography>=42.0.0,<46
+argon2-cffi>=23.1.0,<26
+pyperclip>=1.8.2,<2

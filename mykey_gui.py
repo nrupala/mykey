@@ -143,13 +143,20 @@ class MyKeyGUI:
     def do_save(self):
         svc = self.service_entry.get()
         if not svc: return
-        new_pw = self.app.generate_password()
-        self.app.save_password(svc, new_pw)
+        try:
+            new_pw = self.app.generate_password()
+            self.app.save_password(svc, new_pw)
+        except Exception as exc:  # e.g. WrongPassword: never wipe the vault
+            messagebox.showerror("mykey", str(exc))
+            return
         self.update_ui(new_pw)
 
     def do_get(self):
         svc = self.service_entry.get()
-        self.update_ui(self.app.get_password(svc))
+        try:
+            self.update_ui(self.app.get_password(svc))
+        except Exception as exc:  # Phase 0: typed errors, no string sentinels
+            self.update_ui(f"\u274c {exc}")
 
     def copy_pw(self):
         if self.current_pw_value:
