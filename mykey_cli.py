@@ -122,11 +122,30 @@ def main():
         if args.action in ("agent-enroll", "agent-revoke", "agent-disable",
                            "agent-enable", "agents", "agent-audit",
                            "agent-audit-reset", "rotate-vault-key"):
-            from agents import (enroll_agent, list_agents, read_audit,
-                                reset_audit, revoke_agent, set_agent_enabled,
-                                verify_audit)
+            from agents import (audit_mac_keys, enroll_agent, list_agents,
+                                read_audit, reset_audit, revoke_agent,
+                                set_agent_enabled, verify_audit)
 
-            app.unlock()  # human principal from here on
+            if args.action == "agent-audit-reset":
+                # The reset flow is the recovery path for an anchor or
+                # chain failure, so it must be able to unlock through
+                # one: quarantine happens inside the engine.
+                from mykey import AuditAnchorError
+
+                try:
+                    app.unlock()
+                except AuditAnchorError:
+                    app._anchor_recovery = True
+                    app._entries = None
+                    app.unlock()
+            else:
+                app.unlock()  # human principal from here on
+            if app._migrated_from:
+                print(f"ℹ️  Vault migrated from format v{app._migrated_from} to v3 "
+                      "on this unlock. Agent enrollments were retired — "
+                      "re-enroll agents; if you migrated with the master "
+                      "password, set up the recovery phrase again too.",
+                      file=sys.stderr)
             if args.action == "agents":
                 for a in list_agents(app):
                     state = "enabled" if a["enabled"] else "DISABLED"
@@ -134,7 +153,10 @@ def main():
                           f"  expires={a['expires_at'] or 'never'}"
                           f"  last_used={a['last_used_at'] or 'never'}")
             elif args.action == "agent-audit":
-                check = verify_audit(args.vault, expected_head=app._audit_head)
+                check = verify_audit(
+                    args.vault, expected_head=app._audit_head,
+                    mac_keys=audit_mac_keys(app),
+                    mac_since=app._audit_mac_since)
                 for r in read_audit(args.vault):
                     print(f"{r['ts']}  {r['agent']}  {r['action']} "
                           f"{r['service'] or '-'}  {r['result']}"

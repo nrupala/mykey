@@ -118,9 +118,9 @@ def test_corrupt_vault_raises_vaultcorrupt(vault_path):
 def test_tampered_ciphertext_with_verifier_is_corrupt_not_wrong_password(vault_path):
     MyKey(CORRECT, vault_file=vault_path).save_password("github", "pw-github-123")
     data = json.load(open(vault_path))
-    raw = bytearray(base64.b64decode(data["ciphertext"]))
+    raw = bytearray(base64.b64decode(data["core"]["ciphertext"]))
     raw[0] ^= 0xFF
-    data["ciphertext"] = base64.b64encode(bytes(raw)).decode()
+    data["core"]["ciphertext"] = base64.b64encode(bytes(raw)).decode()
     json.dump(data, open(vault_path, "w"))
     with pytest.raises(VaultCorrupt):
         MyKey(CORRECT, vault_file=vault_path).get_password("github")

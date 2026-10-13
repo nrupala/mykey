@@ -32,7 +32,7 @@ def test_v2_round_trip_records(vault_path):
     assert entry["username"] == "octocat"
     assert entry["tags"] == ["dev"] and entry["favourite"] is True
     data = json.load(open(vault_path))
-    assert data["format"] == "MKVLT" and data["version"] == 2
+    assert data["format"] == "MKVLT" and data["version"] == 3
     assert any(s["id"] == "master" for s in data["slots"])
     assert stat.S_IMODE(os.stat(vault_path).st_mode) == 0o600
 
@@ -69,9 +69,9 @@ def test_v2_wrong_password_and_no_wipe(vault_path):
 def test_v2_tampered_contents_are_corrupt(vault_path):
     MyKey(CORRECT, vault_file=vault_path).save_password("github", "pw-1")
     data = json.load(open(vault_path))
-    raw = bytearray(base64.b64decode(data["ciphertext"]))
+    raw = bytearray(base64.b64decode(data["core"]["ciphertext"]))
     raw[0] ^= 0xFF
-    data["ciphertext"] = base64.b64encode(bytes(raw)).decode()
+    data["core"]["ciphertext"] = base64.b64encode(bytes(raw)).decode()
     json.dump(data, open(vault_path, "w"))
     with pytest.raises(VaultCorrupt):
         MyKey(CORRECT, vault_file=vault_path).unlock()
@@ -102,7 +102,7 @@ def test_v1_vaults_migrate_to_v2_on_save(vault_path, verifier):
         MyKey(WRONG, vault_file=vault_path).get_password("github")
     app.save_password("bank", "pw-bank-456")
     data = json.load(open(vault_path))
-    assert data["format"] == "MKVLT" and data["version"] == 2
+    assert data["format"] == "MKVLT" and data["version"] == 3
     fresh = MyKey(CORRECT, vault_file=vault_path)
     assert fresh.get_password("github") == "pw-github-123"
     assert fresh.get_password("bank") == "pw-bank-456"

@@ -60,7 +60,10 @@ def test_tag_scope(vault_path):
     token = enroll_agent(app, "taggy", ["get:tag:dev"])
     session = open_agent_session(vault_path, token)
     assert session.get("github")["password"] == "pw-1"
-    with pytest.raises(AgentScopeError):
+    # v3: without 'list' the agent holds no metadata key, so an
+    # out-of-scope entry is indistinguishable from a missing one
+    # (KeyError) — the cryptographic form of the existence-oracle rule.
+    with pytest.raises(KeyError):
         session.get("bank")
     # no 'list' scope: metadata shows only scope-visible entries
     assert [m["service"] for m in session.list_metadata()] == ["github"]
@@ -112,16 +115,29 @@ def test_expired_token_denied(vault_path):
         open_agent_session(vault_path, token)
 
 
-def test_wrong_token_lockout(vault_path, enrolled):
-    guard = AgentGuard(vault_path, max_failures=3, lockout_seconds=600)
-    # parseable token, same agent id, wrong 32-byte secret
+def test_wrong_token_progressive_backoff(vault_path, enrolled):
+    """Phase 2B: the hard lockout is replaced by progressive backoff —
+    failures open a doubling no-retry window, attempts inside it are
+    refused WITHOUT extending it, and a human unlock clears it."""
+    guard = AgentGuard(vault_path, base_seconds=0.3, cap_seconds=2.0)
     import base64
     bad = "mkag1.wright." + base64.urlsafe_b64encode(b"\x00" * 32).decode().rstrip("=")
-    for _ in range(3):
-        with pytest.raises(AgentAuthError):
-            open_agent_session(vault_path, bad, guard=guard)
+    with pytest.raises(AgentAuthError):
+        open_agent_session(vault_path, bad, guard=guard)
+    # the legitimate agent is delayed, not locked out permanently
     with pytest.raises(AgentLockedError):
         open_agent_session(vault_path, enrolled, guard=guard)
+    # a refused attempt inside the window does not extend it
+    time.sleep(0.35)
+    assert open_agent_session(vault_path, enrolled, guard=guard).agent_id == "wright"
+    # second failure doubles the window
+    with pytest.raises(AgentAuthError):
+        open_agent_session(vault_path, bad, guard=guard)
+    with pytest.raises(AgentLockedError):
+        open_agent_session(vault_path, enrolled, guard=guard)
+    # a successful human unlock clears the backoff instantly
+    MyKey(CORRECT, vault_file=vault_path).unlock()
+    assert open_agent_session(vault_path, enrolled, guard=guard).agent_id == "wright"
 
 
 def test_audit_chain_verifies_and_detects_tamper(vault_path, enrolled):
@@ -149,17 +165,32 @@ def test_audit_head_sealed_in_vault(vault_path, enrolled):
 
 
 def test_human_only_enrollment(vault_path, enrolled):
+    """v3: an agent session holds NO vault-key-bearing object — the
+    management surface does not exist on it, and the agent slot
+    cannot be used as a wrapped-key unlock (it wraps a bundle key,
+    not the vault key), so the engine fails closed."""
+    import base64 as _b64
+
+    from agents import parse_token
+    from mykey import VaultCorrupt
+
     session = open_agent_session(vault_path, enrolled)
+    assert not hasattr(session, "_vault")
     with pytest.raises(PermissionError):
-        enroll_agent(session._vault, "rogue", ["list"])
+        enroll_agent(session, "rogue", ["list"])
     with pytest.raises(PermissionError):
-        revoke_agent(session._vault, "wright")
+        revoke_agent(session, "wright")
     with pytest.raises(PermissionError):
-        session._vault.change_master("Another-Master-2026!")
-    with pytest.raises(PermissionError):
-        session._vault.delete_entry("github")
-    with pytest.raises(PermissionError):
-        session._vault.export_vault_to_csv()
+        set_agent_enabled(session, "wright", False)
+    agent_id, raw = parse_token(enrolled)
+    slot = MyKey(CORRECT, vault_file=vault_path).get_slot(f"agent:{agent_id}")
+    salt = _b64.b64decode(slot["salt"])
+    params = {k: slot[k] for k in ("time_cost", "memory_cost", "parallelism")}
+    wrapping = MyKey._derive_with_secret(raw, salt, "argon2id", params)
+    probe = MyKey(CORRECT, vault_file=vault_path)
+    with pytest.raises(VaultCorrupt):
+        probe.unlock_via_wrapped_key(f"agent:{agent_id}", wrapping,
+                                     principal="human")
 
 
 def test_token_never_stored_and_registry_encrypted(vault_path, enrolled):

@@ -55,10 +55,23 @@ def test_audit_mismatch_is_never_resealed(tmp_path):
         open_agent_session(v.vault_file, token)
     with open(audit_file, "rb") as f:
         assert f.read().decode().splitlines()[0] == lines[0]  # untouched
+    # v3: a human unlock also refuses on a broken chain (the seal is
+    # never advanced over suspect history); the documented recovery
+    # is the audit-reset flow, which quarantines and starts fresh.
+    from mykey import AuditAnchorError
     human = MyKey(MASTER, vault_file=v.vault_file)
+    with pytest.raises(AuditAnchorError):
+        human.unlock()
+    human._anchor_recovery = True
+    human._entries = None
     human.unlock()
-    assert human._audit_head != ""  # seal unchanged, still points at truth
-    assert verify_audit(v.vault_file, expected_head=human._audit_head)["ok"] is False
+    # the recovery unlock itself quarantined the suspect log,
+    # untouched, beside the vault — the evidence is preserved.
+    import glob
+    suspects = glob.glob(audit_file + ".suspect-*")
+    assert suspects and os.path.exists(suspects[0])
+    reset_audit(human)
+    assert open_agent_session(v.vault_file, token).agent_id == "wright"
 
 
 def test_audit_reset_archives_and_recovers(tmp_path):
@@ -99,7 +112,15 @@ def test_rotate_vault_key_kills_agents_and_recovery(tmp_path):
     human = MyKey(MASTER, vault_file=v.vault_file)
     human.unlock()
     assert human.list_entries()[0]["service"] == "github"  # payload intact
-    assert not os.path.exists(v.vault_file + ".bak")  # no stale backup
+    # rotation deletes the pre-rotation backup; any .bak present now
+    # is a copy of the ROTATED vault — it must not open either.
+    bak = v.vault_file + ".bak"
+    if os.path.exists(bak):
+        bak_copy = os.path.join(t, "from-rotated-backup.mykey")
+        with open(bak, "rb") as src, open(bak_copy, "wb") as dst:
+            dst.write(src.read())
+        with pytest.raises(AgentAuthError):
+            open_agent_session(bak_copy, token)
     clone = open_agent_session(saved_copy, token)  # copy cannot be clawed back
     assert clone.agent_id == "wright"
 
@@ -125,12 +146,17 @@ def test_agent_write_is_insert_only(tmp_path):
     v = _vault(t)
     token = enroll_agent(v, "writer", ["write"])
     s = open_agent_session(v.vault_file, token)
-    with pytest.raises(Exception):
-        s.add_entry({"service": "github", "username": "me",
-                     "password": "planted"})
+    # A write-only agent cannot see the existing entry, so the
+    # submission is accepted as a pending entry — and the human-side
+    # processing REFUSES to let it overwrite (insert-only), leaving
+    # it unprocessed for the human to inspect.
+    s.add_entry({"service": "github", "username": "me",
+                 "password": "planted"})
     human = MyKey(MASTER, vault_file=v.vault_file)
     human.unlock()
     assert human.get_entry("github", "me")["password"] == "gh-secret"
+    assert len(human.list_entries()) == 1
+    assert human._raw_pending  # the plant was NOT accepted
 
 
 def test_list_metadata_sanitizes_url(tmp_path):
@@ -182,7 +208,9 @@ def test_scope_with_extra_colon_does_not_widen(tmp_path):
     v = _vault(t)
     token = enroll_agent(v, "wright", ["get:github:extra"])
     s = open_agent_session(v.vault_file, token)
-    with pytest.raises(AgentScopeError):
+    # the scope did not widen: github is not in the bundle. Without a
+    # metadata key the miss surfaces as KeyError (== not found).
+    with pytest.raises((KeyError, AgentScopeError)):
         s.get("github")
 
 
@@ -204,14 +232,24 @@ def test_audit_reorder_detected(tmp_path):
 
 
 def test_audit_tail_truncation_detected_by_sealed_head(tmp_path):
-    """DeepSeek/OpenAI F2: deleting the tail is caught by the seal."""
+    """DeepSeek/OpenAI F2, v3 form: once a human unlock has SEALED
+    history into the core (and checkpointed the anchor), deleting
+    sealed records is caught by both the seal and the anchor.
+    (Deleting only the post-seal tail before the next human visit
+    is the documented freshness residual — see AGENT_ACCESS.md.)"""
+    from mykey import AuditAnchorError
     t = str(tmp_path)
     v = _vault(t)
     token = enroll_agent(v, "wright", ["list"])
     open_agent_session(v.vault_file, token)
+    open_agent_session(v.vault_file, token)
+    seal = _head(v)  # human unlock seals everything so far
+    assert seal
     audit_file = v.vault_file + ".audit.jsonl"
     with open(audit_file) as f:
         lines = f.read().splitlines()
     with open(audit_file, "w") as f:
         f.write("\n".join(lines[:-1]) + "\n")
-    assert verify_audit(v.vault_file, expected_head=_head(v))["ok"] is False
+    assert verify_audit(v.vault_file, expected_head=seal)["ok"] is False
+    with pytest.raises(AuditAnchorError):
+        MyKey(MASTER, vault_file=v.vault_file).unlock()

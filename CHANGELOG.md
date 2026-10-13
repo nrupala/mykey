@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — Phase 2B: Vault v3, cryptographic agent partitioning
+- **Vault format v3.** Per-entry key partitioning replaces the
+  single-payload design: the core (registry, metadata key,
+  per-entry keys, audit seal) sits under the vault key; each
+  entry's metadata, secret fields and TOTP secret are encrypted
+  under separate keys with domain-bound AAD. Agent slots now wrap
+  per-agent *bundle keys*, never the vault key — scope is enforced
+  **cryptographically**: an agent bundle contains only the keys of
+  in-scope entries (plus the metadata key when `list` is held),
+  so a token + vault file + modified client cannot decrypt
+  out-of-scope entries. TOTP keys are in no bundle, ever.
+- **Rotation on every privilege change.** Revoke, disable and
+  scope narrowing re-encrypt the affected entries under fresh
+  keys; expired enrollments are retired with rotation at the next
+  human unlock. Agent writes go through an authenticated pending
+  path (inbox public key + author MAC) and are processed — never
+  overwritten — at human unlock. Committed ciphertexts are
+  hash-pinned in the core. Design adversarially reviewed by the
+  fleet before build; dispositions are in the PR description.
+- **Audit anchoring.** Per-author MACs on authenticated records,
+  a human-keyed HMAC anchor file checkpointed at human unlocks,
+  and a seal-prefix rule: a log rolled back behind its sealed
+  head is refused at unlock, never re-sealed over. Recovery is
+  the documented `agent-audit-reset` quarantine flow.
+- **Progressive backoff** replaces the hard 5-failure lockout:
+  doubling no-retry windows (5s → 15 min cap) that refusals do
+  not extend, audit-visible failure events without log-spam, and
+  instant clear on human unlock.
+- **Migration.** The first human unlock of a v2 vault migrates
+  it in place: backup kept with agent slots stripped, vault key
+  rotated, agent enrollments retired for re-enrollment, and a
+  master-path migration retires the recovery phrase for re-setup
+  (a recovery-path migration preserves it).
+- `rotate-vault-key` is now a full re-key (new vault key,
+  metadata key, per-entry keys, fresh vault identity) that also
+  clears the audit anchor and pending queue.
+
 ### Added — Phase 2A: authorized-agent access
 - Second principal: an authorized agent, next to the human. Agent
   authorization is a key-value pair on the app — agent id →
