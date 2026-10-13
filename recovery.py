@@ -28,6 +28,8 @@ import secrets
 import unicodedata
 
 from argon2 import low_level
+from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
+from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 def _wordlist_candidates():
     here = os.path.dirname(os.path.abspath(__file__))
@@ -118,6 +120,30 @@ def derive_recovery_key(mnemonic: str, salt: bytes) -> bytes:
         secret=seed, salt=salt, time_cost=3, memory_cost=65536,
         parallelism=4, hash_len=32, type=low_level.Type.ID,
     )
+
+
+def recovery_backup_keypair(mnemonic: str, vault_id: str):
+    """Deterministic X25519 keypair for backup packages (Phase 3A).
+
+    Returns (private_raw, public_raw). Re-derivable from the
+    recovery phrase alone, per vault: the BIP-39 seed passes
+    through Argon2id with a per-vault salt, so (a) offline checking
+    of phrase guesses against the public key costs a memory-hard
+    derivation per guess, and (b) keys are domain-separated per
+    vault — reusing one phrase across vaults does not link their
+    backup keys. Anyone holding the phrase holds this key: it is
+    exactly as strong as the phrase, by design.
+    """
+    seed = mnemonic_to_seed(mnemonic)  # validates the phrase
+    salt = hashlib.sha256(
+        b"mkbak-recovery-v1:" + vault_id.encode()).digest()[:16]
+    raw = low_level.hash_secret_raw(
+        secret=seed, salt=salt, time_cost=3, memory_cost=65536,
+        parallelism=4, hash_len=32, type=low_level.Type.ID,
+    )
+    priv = X25519PrivateKey.from_private_bytes(raw)
+    pub = priv.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
+    return raw, pub
 
 
 if __name__ == "__main__":

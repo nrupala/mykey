@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Phase 3A: user-cloud sync + device-key backup packages
+- **Sync through your own cloud folder.** A provider-neutral sync
+  layer (folder provider shipped; no OAuth cloud APIs) moves the
+  vault as an encrypted bundle — vault + audit log + anchor — with
+  a signed, hash-chained manifest. Conflicts refuse on both sides
+  and preserve both copies; rollback to a replaced history is
+  refused; snapshots (last 10) and a human-gated restore path are
+  included. CLI: `sync-configure/status/push/pull/snapshots/
+  restore/pin`; basic controls in the GUI. Design, security model
+  and exact limitations: `SYNC_BACKUP.md`.
+- **Device keys.** Each device gets an X25519 + Ed25519 identity
+  (private keys in a local 0600 file — no keystore claim). Public
+  keys and fingerprints form a registry inside the encrypted
+  vault; enrollment/revocation are human-gated.
+- **Encrypted backup packages.** One portable file, content key
+  wrapped to every enrolled device plus a recovery recipient
+  re-derivable from the BIP-39 phrase (Argon2id-hardened), signed
+  by the source device and strictly verified on import: tampered,
+  malformed, wrong-recipient, revoked-source and downgrade
+  packages are refused. Revoked devices are excluded from new
+  packages; the inherent limit for already-exported packages is
+  documented in `SYNC_BACKUP.md` §6. A hosted backup service is
+  specified as a future contract only — not built, not claimed.
+
 ### Changed — Phase 2B: Vault v3, cryptographic agent partitioning
 - **Vault format v3.** Per-entry key partitioning replaces the
   single-payload design: the core (registry, metadata key,

@@ -71,6 +71,13 @@ class MyKeyGUI:
         vault_menu.add_command(label="Export CSV…", command=self.do_export)
         vault_menu.add_command(label="Set up recovery phrase…",
                                command=self.do_recovery_setup)
+        sync_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Sync & Backup", menu=sync_menu)
+        sync_menu.add_command(label="Sync status…", command=self.do_sync_status)
+        sync_menu.add_command(label="Sync push", command=self.do_sync_push)
+        sync_menu.add_command(label="Sync pull", command=self.do_sync_pull)
+        sync_menu.add_command(label="Export backup package…",
+                              command=self.do_backup_export)
         about_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="About", menu=about_menu)
         about_menu.add_command(label="Project Details", command=self.show_about)
@@ -281,6 +288,81 @@ class MyKeyGUI:
             )
         else:
             messagebox.showinfo(brand.PRODUCT_NAME, "Recovery phrase verified.")
+
+    # -- Phase 3A: sync & backup (ciphertext file operations; the
+    # sync actions never decrypt the vault) -------------------------
+    def _sync_engine(self):
+        import vaultsync
+
+        return vaultsync.VaultSync(self.app.vault_file)
+
+    def _identity_or_warn(self):
+        import devices
+
+        try:
+            return devices.DeviceIdentity.load()
+        except Exception:
+            messagebox.showwarning(
+                brand.PRODUCT_NAME,
+                "No device identity yet. Create one from the command "
+                "line first (device-init), then enroll this device.",
+            )
+            return None
+
+    def do_sync_status(self):
+        try:
+            status = self._sync_engine().status()
+        except Exception as exc:
+            messagebox.showerror(brand.PRODUCT_NAME, str(exc))
+            return
+        lines = "\n".join(f"{k}: {v}" for k, v in status.items())
+        messagebox.showinfo(brand.PRODUCT_NAME, f"Sync status\n\n{lines}")
+
+    def do_sync_push(self):
+        identity = self._identity_or_warn()
+        if identity is None:
+            return
+        try:
+            result = self._sync_engine().push(identity)
+        except Exception as exc:
+            messagebox.showerror(brand.PRODUCT_NAME, str(exc))
+            return
+        messagebox.showinfo(brand.PRODUCT_NAME, f"Sync push: {result}")
+
+    def do_sync_pull(self):
+        try:
+            result = self._sync_engine().pull()
+        except Exception as exc:
+            messagebox.showerror(brand.PRODUCT_NAME, str(exc))
+            return
+        messagebox.showinfo(
+            brand.PRODUCT_NAME,
+            f"Sync pull: {result}\n\nThe vault changed on disk — "
+            "restart the app to use the pulled copy.",
+        )
+
+    def do_backup_export(self):
+        identity = self._identity_or_warn()
+        if identity is None:
+            return
+        path = filedialog.asksaveasfilename(
+            title="Export encrypted backup package",
+            defaultextension=".mykeybak")
+        if not path:
+            return
+        from backup_pkg import export_package
+
+        try:
+            package = export_package(self.app, identity, out_path=path)
+        except Exception as exc:
+            messagebox.showerror(brand.PRODUCT_NAME, str(exc))
+            return
+        messagebox.showinfo(
+            brand.PRODUCT_NAME,
+            f"Backup package written with {len(package['recipients'])} "
+            "recipients. It is ciphertext — store or send it like a "
+            "vault copy.",
+        )
 
     def show_about(self):
         messagebox.showinfo(
