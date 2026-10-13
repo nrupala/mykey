@@ -53,6 +53,24 @@ def _print_entry(e, status=None):
     print(line)
 
 
+def _prompt_secret(prompt):
+    """Read a secret (master password, recovery phrase, entry password).
+
+    Interactive terminal: getpass, which hides the input. Piped stdin
+    (scripts, automation, the MACHINE access mode): read one line from
+    stdin. Two reasons: piped use has no terminal to hide input in
+    anyway, and getpass's redirected-stdin path on Windows
+    (CPython 3.14) leaves the interpreter hanging at exit with
+    ``_enter_buffered_busy`` on <stdin>. The packaging wave's smoke
+    test reproduced that with ``getpass`` alone.
+    """
+    if sys.stdin.isatty():
+        return getpass.getpass(prompt)
+    sys.stderr.write(prompt)
+    sys.stderr.flush()
+    return sys.stdin.readline().rstrip("\r\n")
+
+
 def _load_identity(args):
     """Load this device's identity, or None (error already shown)."""
     import devices
@@ -66,6 +84,15 @@ def _load_identity(args):
 
 
 def main():
+    # Windows consoles/pipes default to a legacy code page that cannot
+    # encode this CLI's status glyphs (🔑 ✅ ❌ …): printing one crashed
+    # the command. Force UTF-8 output everywhere; on Linux/macOS this
+    # is already the norm, so the reconfigure is a no-op there.
+    for _stream in (sys.stdout, sys.stderr):
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
     p = argparse.ArgumentParser(
         description=f"{brand.PRODUCT_NAME}: {brand.PRODUCT_TAGLINE}"
     )
@@ -365,7 +392,7 @@ def main():
             if os.path.exists(args.vault):
                 print("A vault exists at the target — unlocking it to "
                       "check the package's source against its registry.")
-                master = getpass.getpass("Enter Master Password: ")
+                master = _prompt_secret("Enter Master Password: ")
                 probe = MyKey(master, vault_file=args.vault)
                 probe.unlock()
                 registry = probe._devices
@@ -373,9 +400,9 @@ def main():
             phrase = None
             code = args.backup_code
             if args.recovery:
-                phrase = getpass.getpass("Recovery phrase: ")
+                phrase = _prompt_secret("Recovery phrase: ")
                 if not code:
-                    entered = getpass.getpass(
+                    entered = _prompt_secret(
                         "Backup code (8 words — needed for newer "
                         "backups; leave empty for older ones): ")
                     code = entered.strip() or None
@@ -414,13 +441,13 @@ def main():
             return 0
 
         if args.action == "recovery-unlock":
-            phrase = getpass.getpass("Recovery phrase: ")
+            phrase = _prompt_secret("Recovery phrase: ")
             probe = MyKey("recovery-probe-0000", vault_file=args.vault)
             entries = probe.unlock_via_recovery(phrase)
             print(f"✅ Recovery phrase unlocks this vault ({len(entries)} entries).")
             return 0
 
-        master = getpass.getpass("Enter Master Password: ")
+        master = _prompt_secret("Enter Master Password: ")
         app = MyKey(master, algo=args.kdf, vault_file=args.vault)
 
         if args.action in ("agent-enroll", "agent-revoke", "agent-disable",
@@ -715,7 +742,7 @@ def main():
         elif args.action == "add":
             if not args.service:
                 print("❌ --service required", file=sys.stderr); return 2
-            pwd = getpass.getpass(f"Password for {args.service} (your existing one): ")
+            pwd = _prompt_secret(f"Password for {args.service} (your existing one): ")
             app.add_entry(make_entry(service=args.service, password=pwd,
                                      username=args.username, url=args.url,
                                      notes=args.notes))
@@ -832,7 +859,7 @@ def main():
             print("📝 NEW RECOVERY PHRASE (the old one no longer works):")
             print(phrase)
         elif args.action == "change-master":
-            new_master = getpass.getpass("New Master Password: ")
+            new_master = _prompt_secret("New Master Password: ")
             app.change_master(new_master)
             print("✅ Master password changed.")
     except KeyError as exc:

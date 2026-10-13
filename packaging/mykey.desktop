@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=MyKey
+Comment=Zero-Trust Password Manager
+Exec=MyKey
+Icon=dialog-password
+Terminal=false
+Categories=Utility;Security;
+StartupWMClass=MyKey
