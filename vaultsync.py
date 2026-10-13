@@ -429,6 +429,26 @@ def refresh_pins(vault, state: dict):
     return state
 
 
+def refresh_pairing_pins(vault, state: dict):
+    """Pin pairing records from the (unlocked) vault's pairing
+    registry into the sync state. Sync itself never unlocks the
+    vault, so a folder bound to a pairing target is gated by these
+    pins: scopes, expiry, enabled and revocation state as of the
+    last human unlock — the same trust pattern as signer pins."""
+    pins = state.setdefault("pairing_pins", {})
+    for target_id, rec in vault._pairings.items():
+        pins[target_id] = {
+            "fingerprint": rec.get("fingerprint", ""),
+            "type": rec.get("type", ""),
+            "scopes": list(rec.get("scopes") or []),
+            "expires_at": rec.get("expires_at"),
+            "enabled": bool(rec.get("enabled", False)),
+            "revoked_at": rec.get("revoked_at"),
+            "source": "registry",
+        }
+    return state
+
+
 # ---------------------------------------------------------------------------
 # the sync engine
 # ---------------------------------------------------------------------------
@@ -437,8 +457,47 @@ class VaultSync:
     def __init__(self, vault_path):
         self.vault_path = vault_path
 
+    # -- pairing gate --------------------------------------------------------
+    def _require_pairing(self, state, op):
+        """Gate a push/pull on the folder's paired target, if any.
+
+        A folder with no bound target keeps the pre-pairing
+        behaviour. A bound folder proceeds only while its target's
+        pin (refreshed from the vault registry at human unlock)
+        shows the pairing enabled, unrevoked, unexpired, and
+        holding the scope this operation needs."""
+        target_id = (state or {}).get("pairing_target")
+        if not target_id:
+            return
+        pin = (state.get("pairing_pins") or {}).get(target_id)
+        if pin is None:
+            raise SyncError(
+                f"this sync folder is bound to pairing target "
+                f"{target_id[:12]}… but no pairing pin is recorded "
+                "for it — unlock the vault once and run sync-pin so "
+                "the pairing comes from the vault registry, not "
+                "from the folder")
+        if pin.get("revoked_at"):
+            raise SyncError(
+                f"pairing target {target_id[:12]}… has been REVOKED "
+                "— sync to this folder is stopped")
+        if not pin.get("enabled", False):
+            raise SyncError(
+                f"pairing target {target_id[:12]}… is disabled — "
+                "sync to this folder is stopped")
+        expires = pin.get("expires_at")
+        if expires and _now() > int(expires):
+            raise SyncError(
+                f"pairing target {target_id[:12]}… has EXPIRED — "
+                "re-enroll it in a human session to resume sync")
+        if op not in (pin.get("scopes") or []):
+            raise SyncError(
+                f"pairing target {target_id[:12]}… does not hold "
+                f"the {op!r} scope — sync {op} is not allowed")
+
     # -- configuration -----------------------------------------------------
-    def configure(self, root, identity, device_keys_path=None):
+    def configure(self, root, identity, device_keys_path=None,
+                  target_id=None):
         vault_dir = os.path.dirname(os.path.abspath(self.vault_path))
         root_abs = os.path.abspath(root)
         if root_abs == vault_dir:
@@ -469,6 +528,12 @@ class VaultSync:
             "accepted_bundle_hash": state.get("accepted_bundle_hash", ""),
             "last_synced_vault_hash": state.get("last_synced_vault_hash"),
         })
+        if target_id is not None:
+            # Bind (or, with an empty value, unbind) this folder to
+            # a pairing target. The binding only takes effect once
+            # the target's pin has been refreshed from the registry
+            # at a human unlock — see _require_pairing.
+            state["pairing_target"] = target_id or None
         save_state(self.vault_path, state)
         return state
 
@@ -559,6 +624,21 @@ class VaultSync:
                 local_bundle["bundle_hash"] if local_bundle else None,
             "remote_bundle_hash": head["bundle_hash"] if head else None,
         }
+        target_id = state.get("pairing_target")
+        out["pairing_target"] = target_id
+        if target_id:
+            pin = (state.get("pairing_pins") or {}).get(target_id)
+            if pin is None:
+                out["pairing_state"] = "unpinned — unlock + sync-pin"
+            elif pin.get("revoked_at"):
+                out["pairing_state"] = "revoked"
+            elif not pin.get("enabled", False):
+                out["pairing_state"] = "disabled"
+            elif pin.get("expires_at") and \
+                    _now() > int(pin["expires_at"]):
+                out["pairing_state"] = "expired"
+            else:
+                out["pairing_state"] = "active"
         if manifest is None or head is None:
             out["state"] = "no-remote"
             return out
@@ -659,6 +739,7 @@ class VaultSync:
         state = load_state(self.vault_path)
         if state is None:
             raise SyncError("sync is not configured — run sync-configure")
+        self._require_pairing(state, "push")
         provider = self._provider(state)
         local_bundle = build_bundle(self.vault_path)
         manifest, head = self._checked_manifest(
@@ -746,6 +827,7 @@ class VaultSync:
         state = load_state(self.vault_path)
         if state is None:
             raise SyncError("sync is not configured — run sync-configure")
+        self._require_pairing(state, "pull")
         provider = self._provider(state)
         manifest, head = self._checked_manifest(
             state, provider,

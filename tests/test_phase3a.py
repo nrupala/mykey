@@ -294,14 +294,14 @@ def test_backup_recovery_roundtrip_total_loss(stocked_with_recovery,
                                                 tmp_path):
     d = stocked_with_recovery
     pkg_path = str(tmp_path / "backup.mykeybak")
-    package = export_package(d["app"], d["id_a"], out_path=pkg_path)
+    package, code = export_package(d["app"], d["id_a"], out_path=pkg_path)
     info = inspect_package(pkg_path)
     assert info["signature_valid"] and info["fingerprint_matches_header"]
     assert {r["type"] for r in info["recipients"]} == {"device", "recovery"}
 
     target = str(tmp_path / "newdevice" / "vault.mykey")
     result = import_package(pkg_path, target,
-                            recovery_phrase=d["phrase"],
+                            recovery_phrase=d["phrase"], backup_code=code,
                             expect_fingerprint=d["id_a"].fingerprint)
     assert result["via"] == "recovery"
     recovered = MyKey(MASTER, vault_file=target)
@@ -374,7 +374,7 @@ def test_backup_revoked_device_excluded_but_old_packages_open(
     export_package(d["app"], d["id_a"], out_path=pkg1)
     devices.revoke_device(d["app"], id_b.device_id)
     pkg2 = str(tmp_path / "p2.mykeybak")
-    package2 = export_package(d["app"], d["id_a"], out_path=pkg2)
+    package2, _code2 = export_package(d["app"], d["id_a"], out_path=pkg2)
     recipients2 = {r.get("device_id") for r in package2["recipients"]}
     assert id_b.device_id not in recipients2
 
@@ -479,7 +479,8 @@ def test_recovery_backfill_for_pre3a_vault(tmp_path):
     fresh = MyKey(MASTER, vault_file=vault)
     fresh.unlock_via_recovery(phrase)
     assert fresh._backup_recovery_pub is not None
-    package = export_package(fresh, ident)
+    package, code = export_package(fresh, ident)
+    assert code  # v2 exports always issue a backup code
     assert any(r["type"] == "recovery" for r in package["recipients"])
 
 

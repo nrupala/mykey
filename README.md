@@ -10,7 +10,7 @@ mykey is a stateless, local-first password generator and vault. It ensures that 
     Zero-Knowledge: No cloud, no tracking, no "Forgot Password" backdoors.
     Secure Clipboard: Auto-wipes your clipboard 60 seconds after copying.
     Emergency Recovery: BIP-39 style recovery key support.
-    Sync & Backup (2.1): conflict-safe sync through your own cloud folder, device keys, and portable encrypted backup packages openable by your devices or your recovery phrase — see SYNC_BACKUP.md for the design, security model and exact limitations.
+    Sync & Backup (2.1–2.2): conflict-safe sync through your own cloud folder, device keys, and portable encrypted backup packages openable by your devices or — outside the app, with two factors — your recovery phrase plus a one-time backup code; key-value pairing decides which cloud/export targets receive blobs — see SYNC_BACKUP.md for the design, security model and exact limitations.
     **🍁100% Canadian Built🍁**: Developed with a focus on digital sovereignty.
     
     

@@ -122,6 +122,45 @@ def derive_recovery_key(mnemonic: str, salt: bytes) -> bytes:
     )
 
 
+BACKUP_CODE_WORDS = 8  # 8 words x 11 bits = 88 bits of entropy
+
+
+def generate_backup_code() -> str:
+    """Generate a backup code: 8 random words from the BIP-39 list.
+
+    88 bits of entropy, drawn with ``secrets``. A backup code is the
+    SECOND factor for opening a v2 backup package outside the app
+    (the first is the recovery phrase). It is generated at export,
+    shown to the user once, and never stored anywhere — not in the
+    package, not in the vault, not in any file.
+    """
+    return " ".join(
+        WORDLIST[secrets.randbelow(len(WORDLIST))]
+        for _ in range(BACKUP_CODE_WORDS))
+
+
+def normalize_backup_code(code: str) -> str:
+    """Canonical form of a backup code, or raise ValueError.
+
+    Case-insensitive, any whitespace collapses to single spaces.
+    Every word must come from the BIP-39 list and there must be
+    exactly BACKUP_CODE_WORDS of them — anything else is not a
+    backup code this product issued, and failing here (before any
+    key derivation) gives the user a plain, immediate error.
+    """
+    if not isinstance(code, str):
+        raise ValueError("backup code must be text")
+    words = unicodedata.normalize("NFKD", code).strip().lower().split()
+    if len(words) != BACKUP_CODE_WORDS:
+        raise ValueError(
+            f"a backup code has {BACKUP_CODE_WORDS} words — "
+            f"this one has {len(words)}")
+    for word in words:
+        if word not in _INDEX:
+            raise ValueError(f"word not in the word list: {word!r}")
+    return " ".join(words)
+
+
 def recovery_backup_keypair(mnemonic: str, vault_id: str):
     """Deterministic X25519 keypair for backup packages (Phase 3A).
 
