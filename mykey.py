@@ -96,7 +96,7 @@ ENTRY_FIELDS = (
 DEFAULT_ROTATE_DAYS = 180
 ROTATION_DUE_SOON_DAYS = 14
 _METADATA_FIELDS = ("service", "username", "url", "tags", "favourite",
-                    "created", "updated")
+                    "created", "updated", "android_app")
 # Hard caps (fleet design review, finding 9): agent-submitted pending
 # material is bounded before any expensive parsing or decryption.
 MAX_PENDING_ENTRIES = 64
@@ -240,8 +240,40 @@ def audit_chain_state(path):
     return True, prev, len(records), ""
 
 
+_HEX_DIGITS = frozenset("0123456789abcdef")
+
+
+def clean_android_app(value):
+    """Validate an Android-app autofill binding, or return None.
+
+    A binding links an entry to one Android app: its package name
+    plus the SHA-256 of the app's signing certificate (lowercase
+    hex). The Android app sets bindings (after the user confirms);
+    every other client carries them verbatim so the binding
+    survives round trips. Anything malformed is dropped to None —
+    a bad binding must never silently match an app at fill time.
+    """
+    if not isinstance(value, dict):
+        return None
+    package = value.get("package")
+    cert = value.get("cert_sha256")
+    if not isinstance(package, str) or not package.strip():
+        return None
+    if not isinstance(cert, str):
+        return None
+    cert = cert.strip().lower().replace(":", "")
+    if len(cert) != 64 or any(c not in _HEX_DIGITS for c in cert):
+        return None
+    out = {"package": package.strip(), "cert_sha256": cert}
+    label = value.get("label")
+    if isinstance(label, str) and label.strip():
+        out["label"] = label.strip()
+    return out
+
+
 def make_entry(service, password="", username="", url="", notes="",
-               totp_secret="", tags=None, favourite=False, **extra):
+               totp_secret="", tags=None, favourite=False,
+               android_app=None, **extra):
     ts = _now()
     entry = {
         "id": uuid.uuid4().hex,
@@ -253,6 +285,7 @@ def make_entry(service, password="", username="", url="", notes="",
         "totp_secret": totp_secret,
         "tags": list(tags or []),
         "favourite": bool(favourite),
+        "android_app": clean_android_app(android_app),
         "created": ts,
         "updated": ts,
         # A password's age clock starts when the entry is created;
@@ -276,6 +309,7 @@ def _normalize_entry(raw):
         totp_secret=raw.get("totp_secret", ""),
         tags=raw.get("tags", []),
         favourite=raw.get("favourite", False),
+        android_app=raw.get("android_app"),
     )
     entry["id"] = raw.get("id", entry["id"])
     entry["created"] = raw.get("created", entry["created"])
