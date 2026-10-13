@@ -65,6 +65,165 @@ def _load_identity(args):
         return None
 
 
+# ----------------------------------------------------------------------
+# Browser extension: native messaging installation.
+#
+# The browser starts the host by name (com.usemykey.mykey). Each
+# browser family has its own manifest location and, for Chromium
+# builds, its own allowed_origins list — which is why installation
+# reads the pairing store: only paired Chromium extension ids are
+# allowed to open the pipe. Re-run after pairing a new browser.
+# ----------------------------------------------------------------------
+
+_EXT_HOST_NAME = brand.APP_ID
+_EXT_GECKO_ID = f"mykey@{brand.DOMAIN}"
+
+
+def _ext_write_launcher(repo_dir, mykey_dir):
+    """The tiny launcher the browser actually starts.
+
+    It embeds THIS interpreter (sys.executable): the one running
+    the CLI is the one that has MyKey's dependencies installed.
+    A bare "python" from PATH may be a different interpreter
+    without them — the host would die on its first import, with
+    the browser showing only a silent disconnect. (A packaged
+    build must point the launcher at its bundled host entry
+    instead; that packaging step owns the substitution.)
+    """
+    host_py = os.path.join(repo_dir, "native_host.py")
+    python = sys.executable or "python3"
+    if os.name == "nt":
+        path = os.path.join(mykey_dir, "mykey-native-host.bat")
+        with open(path, "w", encoding="utf-8", newline="\r\n") as f:
+            f.write("@echo off\r\n")
+            f.write(f'"{python}" "{host_py}"\r\n')
+        return path
+    path = os.path.join(mykey_dir, "mykey-native-host.sh")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("#!/bin/sh\n")
+        f.write(f'exec "{python}" "{host_py}"\n')
+    os.chmod(path, 0o755)
+    return path
+
+
+def _ext_manifest(launcher, browser, store):
+    manifest = {
+        "name": _EXT_HOST_NAME,
+        "description": f"{brand.PRODUCT_NAME} native messaging host — "
+                       "brokers the desktop vault to the paired "
+                       "browser extension over an encrypted channel.",
+        "path": launcher,
+        "type": "stdio",
+    }
+    if browser == "firefox":
+        manifest["allowed_extensions"] = [_EXT_GECKO_ID]
+    else:
+        import re as _re
+
+        origins = []
+        for record in store.list_pairings():
+            ext_id = record["extension_id"]
+            if _re.fullmatch(r"[a-p]{32}", ext_id) \
+                    and not record["revoked_at"]:
+                origins.append(f"chrome-extension://{ext_id}/")
+        manifest["allowed_origins"] = origins
+    return manifest
+
+
+def _ext_host_install(args, store):
+    import platform
+
+    repo_dir = os.path.dirname(os.path.abspath(__file__))
+    mykey_dir = os.path.join(os.path.expanduser("~"), ".mykey")
+    os.makedirs(mykey_dir, exist_ok=True)
+    launcher = _ext_write_launcher(repo_dir, mykey_dir)
+    system = platform.system()
+    home = os.path.expanduser("~")
+
+    chromium_dirs = {
+        "chrome": {
+            "Linux": ".config/google-chrome/NativeMessagingHosts",
+            "Darwin": "Library/Application Support/Google/Chrome/"
+                      "NativeMessagingHosts",
+        },
+        "chromium": {
+            "Linux": ".config/chromium/NativeMessagingHosts",
+            "Darwin": "Library/Application Support/Chromium/"
+                      "NativeMessagingHosts",
+        },
+        "edge": {
+            "Linux": ".config/microsoft-edge/NativeMessagingHosts",
+            "Darwin": "Library/Application Support/Microsoft Edge/"
+                      "NativeMessagingHosts",
+        },
+        "brave": {
+            "Linux": ".config/BraveSoftware/Brave-Browser/"
+                     "NativeMessagingHosts",
+            "Darwin": "Library/Application Support/BraveSoftware/"
+                      "Brave-Browser/NativeMessagingHosts",
+        },
+    }
+    firefox_dirs = {
+        "Linux": ".mozilla/native-messaging-hosts",
+        "Darwin": "Library/Application Support/Mozilla/"
+                  "NativeMessagingHosts",
+    }
+    windows_keys = {
+        "chrome": r"Software\Google\Chrome\NativeMessagingHosts",
+        "edge": r"Software\Microsoft\Edge\NativeMessagingHosts",
+        "brave": r"Software\BraveSoftware\Brave-Browser\NativeMessagingHosts",
+        "firefox": r"Software\Mozilla\NativeMessagingHosts",
+    }
+
+    wanted = ["chrome", "chromium", "edge", "brave", "firefox"] \
+        if args.browser == "all" else [args.browser]
+    written = []
+    for browser in wanted:
+        manifest = _ext_manifest(launcher, browser, store)
+        if system == "Windows":
+            manifest_path = os.path.join(
+                mykey_dir, f"{_EXT_HOST_NAME}.{browser}.json")
+            with open(manifest_path, "w", encoding="utf-8") as f:
+                json.dump(manifest, f, indent=1)
+            try:
+                import winreg
+
+                key_path = windows_keys[browser] + "\\" + _EXT_HOST_NAME
+                with winreg.CreateKey(winreg.HKEY_CURRENT_USER,
+                                      key_path) as key:
+                    winreg.SetValueEx(key, None, 0, winreg.REG_SZ,
+                                      manifest_path)
+                written.append(f"{browser}: registry → {manifest_path}")
+            except OSError as exc:
+                print(f"⚠️  {browser}: could not write the registry "
+                      f"key ({exc}); manifest is at {manifest_path}",
+                      file=sys.stderr)
+            continue
+        rel = (firefox_dirs if browser == "firefox"
+               else chromium_dirs[browser]).get(system)
+        if rel is None:
+            print(f"⚠️  {browser}: no known manifest location on "
+                  f"{system}", file=sys.stderr)
+            continue
+        directory = os.path.join(home, rel)
+        os.makedirs(directory, exist_ok=True)
+        manifest_path = os.path.join(directory, _EXT_HOST_NAME + ".json")
+        with open(manifest_path, "w", encoding="utf-8") as f:
+            json.dump(manifest, f, indent=1)
+        written.append(f"{browser}: {manifest_path}")
+
+    print(f"🔌 Native host launcher: {launcher}")
+    for line in written:
+        print(f"   {line}")
+    if not any("chrome-extension://" in json.dumps(
+            _ext_manifest(launcher, b, store)) for b in wanted
+            if b != "firefox"):
+        print("Note: no paired Chromium extension ids yet — Chromium "
+              "manifests allow none until you pair (ext-enroll) and "
+              "re-run this install.")
+    return 0
+
+
 def main():
     p = argparse.ArgumentParser(
         description=f"{brand.PRODUCT_NAME}: {brand.PRODUCT_TAGLINE}"
@@ -92,6 +251,11 @@ def main():
         "pairing-keygen", "pairing-payload",
         "pair-enroll", "pairings", "pair-revoke", "pair-disable",
         "pair-enable",
+        # Browser extension wave: extension pairing (same key-value
+        # pattern), host settings, native-messaging installation.
+        "ext-host-payload", "ext-enroll", "ext-pairings",
+        "ext-revoke", "ext-disable", "ext-enable",
+        "ext-set-vault", "ext-set", "ext-host-install",
     ])
     p.add_argument("--agent-id", help="Agent id (agent-enroll/-revoke/...)")
     p.add_argument("--scopes", default="",
@@ -160,6 +324,20 @@ def main():
     p.add_argument("--backup-code",
                    help="Backup code for a v2 package (backup-import; "
                         "prompted when --recovery is used without it)")
+    # Browser-extension-wave arguments.
+    p.add_argument("--extension", help="Extension id (ext-revoke/"
+                                       "ext-disable/ext-enable)")
+    p.add_argument("--browser",
+                   choices=["chrome", "chromium", "edge", "brave",
+                            "firefox", "all"],
+                   default="all",
+                   help="Browser for ext-host-install (default: all)")
+    p.add_argument("--clipboard-seconds", type=int,
+                   help="Clipboard clear delay for copied secrets, "
+                        "60–300 (ext-set)")
+    p.add_argument("--auto-lock-seconds", type=int,
+                   help="Idle auto-lock for the extension host "
+                        "session (ext-set)")
     args = p.parse_args()
 
     if args.action == "gen" and args.len < MIN_GENERATED_PASSWORD_LENGTH:
@@ -294,6 +472,154 @@ def main():
             print(f"Fingerprint (compare out-of-band): "
                   f"{target.fingerprint}", file=sys.stderr)
             return 0
+
+        # ---- Browser extension wave (host store, never the vault) ----
+        if args.action in ("ext-host-payload", "ext-enroll",
+                           "ext-pairings", "ext-revoke", "ext-disable",
+                           "ext-enable", "ext-set-vault", "ext-set",
+                           "ext-host-install"):
+            import extpair
+
+            store = extpair.ExtensionHostStore.load(
+                os.environ.get("MYKEY_EXT_STORE")
+                or extpair.default_store_path())
+
+            if args.action == "ext-host-payload":
+                payload = json.dumps(store.host_payload(), indent=1)
+                if args.file:
+                    with open(args.file, "w", encoding="utf-8") as f:
+                        f.write(payload + "\n")
+                    os.chmod(args.file, 0o600)
+                    print(f"📇 Host payload written to {args.file} — "
+                          "paste it into the extension's options. "
+                          "It carries no secrets.")
+                else:
+                    print(payload)
+                print(f"Host fingerprint (the extension must show "
+                      f"the same): {store.host_fingerprint}")
+                return 0
+
+            if args.action == "ext-enroll":
+                if not args.payload:
+                    print("❌ --payload FILE required (the pairing "
+                          "payload from the extension's options)",
+                          file=sys.stderr)
+                    return 2
+                try:
+                    # utf-8-sig: payloads saved by Windows editors
+                    # routinely carry a BOM, which strict JSON
+                    # parsing rejects — a pairing must not fail
+                    # over an invisible byte.
+                    with open(args.payload, encoding="utf-8-sig") as f:
+                        payload = json.load(f)
+                    record = extpair.verify_payload(payload)
+                except Exception as exc:
+                    print(f"❌ {exc}", file=sys.stderr)
+                    return 2
+                print(f"Extension: {record['extension_id']}")
+                print(f"Label:     {record['label'] or '-'}")
+                print(f"Fingerprint: {record['fingerprint']}")
+                print("Compare this fingerprint with the one the "
+                      "extension shows in its options. Pair only if "
+                      "they match exactly.")
+                if not args.yes:
+                    answer = input("Pair this extension? [y/N] ")
+                    if answer.strip().lower() not in ("y", "yes"):
+                        print("Not paired.")
+                        return 1
+                scopes = [s for s in (args.scopes or "").split(",")
+                          if s.strip()] or ["fill", "save"]
+                try:
+                    record = store.enroll(payload, scopes,
+                                          expires_days=args.expires_days)
+                except extpair.ExtensionPairingError as exc:
+                    print(f"❌ {exc}", file=sys.stderr)
+                    return 2
+                print(f"🔗 Paired. Scopes: {', '.join(record['scopes'])}"
+                      + (f"  Expires: {record['expires_at']}"
+                         if record["expires_at"] else "  No expiry"))
+                print("Run ext-host-install so the browser can "
+                      "reach the desktop host.")
+                return 0
+
+            if args.action == "ext-pairings":
+                rows = store.list_pairings()
+                if not rows:
+                    print("No browser extensions paired.")
+                    return 0
+                for r in rows:
+                    state = ("active" if r["active"] else
+                             "revoked" if r["revoked_at"] else
+                             "disabled" if not r["enabled"] else
+                             "expired")
+                    print(f"- {r['extension_id']}  [{state}]  "
+                          f"scopes={','.join(r['scopes'])}  "
+                          f"label={r['label'] or '-'}")
+                    print(f"    fingerprint: {r['fingerprint']}")
+                return 0
+
+            if args.action in ("ext-revoke", "ext-disable",
+                               "ext-enable"):
+                if not args.extension:
+                    print("❌ --extension ID required", file=sys.stderr)
+                    return 2
+                try:
+                    if args.action == "ext-revoke":
+                        store.revoke(args.extension)
+                        print(f"⛔ Pairing revoked: {args.extension}. "
+                              "It can never be re-enrolled — the "
+                              "browser profile must reset its pairing "
+                              "identity to pair again.")
+                    elif args.action == "ext-disable":
+                        store.set_enabled(args.extension, False)
+                        print(f"⏸ Pairing disabled: {args.extension}")
+                    else:
+                        store.set_enabled(args.extension, True)
+                        print(f"▶️ Pairing enabled: {args.extension}")
+                except extpair.ExtensionPairingError as exc:
+                    print(f"❌ {exc}", file=sys.stderr)
+                    return 2
+                return 0
+
+            if args.action == "ext-set-vault":
+                path = os.path.abspath(args.vault)
+                if not os.path.exists(path):
+                    print(f"❌ No vault file at {path}", file=sys.stderr)
+                    return 2
+                store.set_setting("vault_file", path)
+                print(f"🗄 Extension host will serve the vault at "
+                      f"{path}")
+                return 0
+
+            if args.action == "ext-set":
+                changed = False
+                try:
+                    if args.clipboard_seconds is not None:
+                        store.set_setting("clipboard_clear_seconds",
+                                          args.clipboard_seconds)
+                        print(f"📋 Copied secrets clear after "
+                              f"{args.clipboard_seconds} seconds")
+                        changed = True
+                    if args.auto_lock_seconds is not None:
+                        store.set_setting("auto_lock_seconds",
+                                          args.auto_lock_seconds)
+                        print(f"🔒 Extension session auto-locks after "
+                              f"{args.auto_lock_seconds} idle seconds")
+                        changed = True
+                except extpair.ExtensionPairingError as exc:
+                    print(f"❌ {exc}", file=sys.stderr)
+                    return 2
+                if not changed:
+                    settings = store.settings
+                    print(f"clipboard_clear_seconds="
+                          f"{settings.get('clipboard_clear_seconds')}")
+                    print(f"auto_lock_seconds="
+                          f"{settings.get('auto_lock_seconds')}")
+                    print(f"vault_file={settings.get('vault_file') or '-'}")
+                return 0
+
+            if args.action == "ext-host-install":
+                return _ext_host_install(args, store)
 
         if args.action == "backup-inspect":
             from backup_pkg import inspect_package

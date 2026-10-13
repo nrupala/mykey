@@ -274,3 +274,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Notes
 - No vault-format change in this PR: the v1 envelope is unchanged apart
   from the added `verifier` field, which older readers ignore.
+
+### Added — Browser extension host (native messaging)
+- **Native messaging host** (`native_host.py`): a small,
+  single-purpose broker the browser starts on demand. It serves
+  ONE paired browser extension: unlock state, origin-matched entry
+  queries, fills, TOTP codes, and save-capture commits. The vault
+  never leaves this process unencrypted; the extension holds no
+  vault copy. Design + protocol: `EXTENSION_HOST.md`.
+- **Encryption in transit, not just at rest.** The local pipe is
+  treated as untrusted: pairings are X25519 key-value records
+  (extension id → public key + scopes `fill`/`save` + expiry +
+  enabled, human-approved with a fingerprint ceremony), session
+  keys come from the pairing keys per connection (HKDF-SHA256),
+  every message is AES-256-GCM sealed with strict replay
+  counters. A frame recording shows only ciphertext — proven by
+  the leak test suite (`tests/test_native_host.py` greps raw wire
+  bytes for fixture secrets; the extension repo carries the other
+  half of the suite).
+- **Pairing store** (`extpair.py`): `~/.mykey/extension-host.json`
+  (0600), separate from the sync/export pairing registry —
+  different trust domain, same key-value pattern. Revoked ids can
+  never re-enroll. Per-entry "also fill on subdomains" prefs and
+  host settings (vault path, auto-lock 300s default, clipboard
+  clear 60–300s) live in this store, not in the vault.
+- **Origin authority stays here.** Scheme + host + port must match
+  exactly; subdomains fill only with the per-entry toggle;
+  lookalike hosts never match. CLI: `ext-host-payload`,
+  `ext-enroll`, `ext-pairings`, `ext-revoke`/`ext-disable`/
+  `ext-enable`, `ext-set-vault`, `ext-set`, `ext-host-install`
+  (Chromium family + Firefox manifests; Windows uses HKCU).
+- Unlock lives in the host process memory only; wrong-password
+  backoff; locking (or auto-lock) ends extension fills at once.
