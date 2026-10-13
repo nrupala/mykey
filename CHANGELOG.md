@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Phase 2A: authorized-agent access
+- Second principal: an authorized agent, next to the human. Agent
+  authorization is a key-value pair on the app — agent id →
+  {token hash (SHA-256; the 256-bit token is shown once at
+  enrollment), scopes, created/expiry, enabled, last used} — stored
+  inside the encrypted vault payload, with a matching wrapped-key
+  slot (`agent:<id>`) in the Vault v2 header.
+- Only a human session (master/recovery unlock) can enroll, scope,
+  disable, enable or revoke an agent. Revocation deletes the pair
+  and the slot; access dies immediately. An agent never sees the
+  master password and can never export, delete, import, manage
+  recovery, or manage agents.
+- Scopes enforced on every call: `list` (metadata only — never
+  passwords, notes or TOTP secrets), `get:<service>`,
+  `get:tag:<tag>`, `get:*`, and `write` (add entries) only when
+  explicitly granted. TOTP secrets are never returned to agents.
+- Every authentication and access (allow and deny) is appended to a
+  hash-chained audit log (`<vault>.audit.jsonl`, 0600); the chain
+  head is sealed inside the encrypted payload so truncation is
+  detectable. Bad-token attempts are rate-limited with a persistent
+  lockout (5 failures → 5 minutes).
+- Agent surfaces: CLI `agent-get` / `agent-list` (token only from
+  the `MYKEY_AGENT_KEY` environment variable, never a flag) and a
+  stdio MCP server (`mykey_mcp.py`) exposing `mykey_list` /
+  `mykey_get`. Human management: `agent-enroll`, `agent-revoke`,
+  `agent-disable`, `agent-enable`, `agents`, `agent-audit`.
+- Fleet review round (three-builder rule): Claude drafted the MCP
+  server (adopted: uniform auth errors, strict validation; rejected:
+  cached session — revocation must apply per call). OpenAI's
+  adversarial review produced 8 findings; all credible ones are
+  fixed in this PR: audit chains are never re-sealed after a
+  mismatch (`agent-audit-reset` archives the suspect log instead),
+  `rotate-vault-key` re-keys the vault for suspected compromise,
+  revocation/disable sync the rolling backup, the CLI no longer
+  leaks entry existence, `list` metadata sanitizes URLs, agent
+  writes are insert-only, and vault mutations take a cross-process
+  lock. DeepSeek contributed adversarial test cases. 89 tests pass
+  in a fresh venv (56 Phase 1 + 33 Phase 2A / review round). No
+  mechanism here is judged novel (see LICENSING.md).
+
 ### Added — Phase 1: Vault v2
 - Envelope encryption (Vault v2): random 256-bit vault key, AES-256-GCM,
   header stores format version + KDF parameters + wrapped-key slots.
