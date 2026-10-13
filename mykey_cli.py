@@ -56,19 +56,24 @@ def _print_entry(e, status=None):
 def _prompt_secret(prompt):
     """Read a secret (master password, recovery phrase, entry password).
 
-    Interactive terminal: getpass, which hides the input. Piped stdin
-    (scripts, automation, the MACHINE access mode): read one line from
-    stdin. Two reasons: piped use has no terminal to hide input in
-    anyway, and getpass's redirected-stdin path on Windows
-    (CPython 3.14) leaves the interpreter hanging at exit with
-    ``_enter_buffered_busy`` on <stdin>. The packaging wave's smoke
-    test reproduced that with ``getpass`` alone.
+    Everywhere: getpass, which hides typed input and already falls
+    back to reading stdin itself when stdin is not a terminal.
+
+    The one exception is Windows with piped stdin (scripts,
+    automation, the MACHINE access mode): getpass's redirected-stdin
+    path on Windows (CPython 3.14) leaves the interpreter hanging at
+    exit with ``_enter_buffered_busy`` on <stdin> — the packaging
+    wave's smoke test reproduced that with ``getpass`` alone. There,
+    read one line from stdin directly. (An earlier version of this
+    helper took the stdin path on every platform and broke the test
+    suite's getpass monkeypatch under pytest; the gate is Windows
+    -only so behaviour elsewhere is byte-identical to before.)
     """
-    if sys.stdin.isatty():
-        return getpass.getpass(prompt)
-    sys.stderr.write(prompt)
-    sys.stderr.flush()
-    return sys.stdin.readline().rstrip("\r\n")
+    if sys.platform == "win32" and not sys.stdin.isatty():
+        sys.stderr.write(prompt)
+        sys.stderr.flush()
+        return sys.stdin.readline().rstrip("\r\n")
+    return getpass.getpass(prompt)
 
 
 def _load_identity(args):
