@@ -73,9 +73,19 @@ _FORBIDDEN_PATTERNS = [
 ]
 
 # The only URLs permitted in product code: the Apache licence text
-# in file headers. Brand contact points are an email address and a
+# in file headers, and the two user-invoked attribution links of
+# docs/TRANSPORT_SECURITY.md §10 (the owner's linked-attribution
+# convention: the About dialog's owner / Muse links — opened by
+# the user's own click in the system browser; the app fetches
+# nothing, ever). Brand contact points are an email address and a
 # bare domain string in brand.py — never a fetched endpoint.
-_ALLOWED_URL = "http://www.apache.org/licenses/LICENSE-2.0"
+# Amended deliberately in the Help/About change, in the same
+# change, per this gate's own rule — the set stays closed.
+_ALLOWED_URLS = {
+    "http://www.apache.org/licenses/LICENSE-2.0",
+    "https://nrupalakolkar.com",
+    "https://muse.ai/join",
+}
 
 
 def test_no_network_or_tls_weakening_in_product_code():
@@ -93,7 +103,7 @@ def test_no_unapproved_urls_in_product_code():
     offenders = []
     for name in _product_py_files():
         for url in re.findall(r"https?://[^\s'\")]+", _read(name)):
-            if url != _ALLOWED_URL:
+            if url not in _ALLOWED_URLS:
                 offenders.append(f"{name}: {url}")
     assert not offenders, (
         "unapproved URL(s) in product code (telemetry/endpoint "
