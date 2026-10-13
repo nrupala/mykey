@@ -306,6 +306,18 @@ def test_imported_entries_have_no_recorded_date(vault_path, clock):
     entry = app.get_entry("imported")
     assert entry["password_set_at"] is None
     assert rotation_status(entry, 180, now=T0)["state"] == "unknown"
+    # An import OVERWRITE also clears the date: the replacement
+    # password's age is unknown, so the old entry's date must not
+    # survive onto it.
+    _add(app, service="victim", password="original-pw-123")
+    assert app.get_entry("victim")["password_set_at"] == T0
+    overwrite = [{"service": "victim", "username": "",
+                  "password": "imported-pw-999", "url": "", "notes": "",
+                  "totp_secret": "", "tags": [], "favourite": False}]
+    app.import_entries(overwrite, on_conflict="overwrite")
+    entry = app.get_entry("victim")
+    assert entry["password"] == "imported-pw-999"
+    assert entry["password_set_at"] is None
 
 
 # -- CLI surface -------------------------------------------------------------------

@@ -76,6 +76,10 @@ def main():
         "sync-configure", "sync-status", "sync-push", "sync-pull",
         "sync-snapshots", "sync-restore", "sync-pin",
         "backup-export", "backup-import", "backup-inspect",
+        # Blob wave: key-value pairing for cloud/export targets.
+        "pairing-keygen", "pairing-payload",
+        "pair-enroll", "pairings", "pair-revoke", "pair-disable",
+        "pair-enable",
     ])
     p.add_argument("--agent-id", help="Agent id (agent-enroll/-revoke/...)")
     p.add_argument("--scopes", default="",
@@ -129,6 +133,20 @@ def main():
                    help="Allow importing an older backup package")
     p.add_argument("--recovery", action="store_true",
                    help="Open the package with the recovery phrase (backup-import)")
+    # Blob-wave arguments.
+    p.add_argument("--payload", help="Pairing payload JSON file (pair-enroll)")
+    p.add_argument("--target", help="Pairing target id (pair-revoke/-disable/"
+                                    "-enable; sync-configure binds the folder "
+                                    "to this target, empty string unbinds)")
+    p.add_argument("--pairing-keys",
+                   help="Pairing target key file (pairing-payload; "
+                        "backup-import opens pairing-wrapped packages)")
+    p.add_argument("--pairing-type", default="export",
+                   choices=["device", "cloud-folder", "export"],
+                   help="Pairing target type (pairing-keygen)")
+    p.add_argument("--backup-code",
+                   help="Backup code for a v2 package (backup-import; "
+                        "prompted when --recovery is used without it)")
     args = p.parse_args()
 
     if args.action == "gen" and args.len < MIN_GENERATED_PASSWORD_LENGTH:
@@ -204,12 +222,76 @@ def main():
                   file=sys.stderr)
             return 0
 
+        if args.action == "pairing-keygen":
+            import pairings
+
+            if not args.pairing_keys:
+                print("❌ --pairing-keys FILE required (where the new "
+                      "target key file will be stored)", file=sys.stderr)
+                return 2
+            if os.path.exists(args.pairing_keys) and not args.force:
+                print(f"❌ A pairing target key already exists at "
+                      f"{args.pairing_keys}. Use --force to replace it "
+                      "— packages wrapped to the old key cannot be "
+                      "opened by the new one.", file=sys.stderr)
+                return 2
+            target = pairings.PairingTargetIdentity.generate(
+                args.pairing_type, args.label)
+            target.save(args.pairing_keys)
+            print(f"🎯 Pairing target created: {target.target_id}")
+            print(f"    Type: {target.target_type}  "
+                  f"Fingerprint: {target.fingerprint}")
+            print(f"    Keys: {args.pairing_keys} (mode 0600 — "
+                  "protect this file; it is never synced)")
+            payload = json.dumps(target.payload(), indent=1)
+            if args.file:
+                with open(args.file, "w", encoding="utf-8") as f:
+                    f.write(payload + "\n")
+                os.chmod(args.file, 0o600)
+                print(f"📇 Pairing payload written to {args.file} — "
+                      "give it to the vault owner to enroll "
+                      "(pair-enroll). It carries no secrets.")
+            else:
+                print("Pairing payload (give it to the vault owner; "
+                      "it carries no secrets):")
+                print(payload)
+            return 0
+
+        if args.action == "pairing-payload":
+            import pairings
+
+            if not args.pairing_keys:
+                print("❌ --pairing-keys FILE required",
+                      file=sys.stderr)
+                return 2
+            try:
+                target = pairings.PairingTargetIdentity.load(
+                    args.pairing_keys)
+            except pairings.PairingError as exc:
+                print(f"❌ {exc}", file=sys.stderr)
+                return 2
+            payload = json.dumps(target.payload(), indent=1)
+            if args.file:
+                with open(args.file, "w", encoding="utf-8") as f:
+                    f.write(payload + "\n")
+                os.chmod(args.file, 0o600)
+                print(f"📇 Pairing payload written to {args.file}")
+            else:
+                print(payload)
+            print(f"Fingerprint (compare out-of-band): "
+                  f"{target.fingerprint}", file=sys.stderr)
+            return 0
+
         if args.action == "backup-inspect":
             from backup_pkg import inspect_package
 
             info = inspect_package(args.file)
             for key, value in info.items():
                 print(f"{key}: {value}")
+            if info["legacy"]:
+                print("⚠️  LEGACY package: its recovery slot opens "
+                      "with the recovery phrase alone (no backup "
+                      "code). New exports use two-factor recovery.")
             return 0 if info["signature_valid"] else 1
 
         if args.action in ("sync-configure", "sync-status",
@@ -225,7 +307,8 @@ def main():
                 if identity is None:
                     return 2
                 sync.configure(args.folder, identity,
-                               device_keys_path=args.device_keys)
+                               device_keys_path=args.device_keys,
+                               target_id=args.target)
                 print(f"🔄 Sync configured: folder {args.folder}")
             elif args.action == "sync-status":
                 for key, value in sync.status().items():
@@ -265,6 +348,7 @@ def main():
                 if identity is None:
                     return 2
             registry = None
+            pairing_registry = None
             if os.path.exists(args.vault):
                 print("A vault exists at the target — unlocking it to "
                       "check the package's source against its registry.")
@@ -272,9 +356,27 @@ def main():
                 probe = MyKey(master, vault_file=args.vault)
                 probe.unlock()
                 registry = probe._devices
+                pairing_registry = probe._pairings
             phrase = None
+            code = args.backup_code
             if args.recovery:
                 phrase = getpass.getpass("Recovery phrase: ")
+                if not code:
+                    entered = getpass.getpass(
+                        "Backup code (8 words — needed for newer "
+                        "backups; leave empty for older ones): ")
+                    code = entered.strip() or None
+            pairing_priv = None
+            if args.pairing_keys:
+                import pairings as pairings_mod
+
+                try:
+                    target = pairings_mod.PairingTargetIdentity.load(
+                        args.pairing_keys)
+                except pairings_mod.PairingError as exc:
+                    print(f"❌ {exc}", file=sys.stderr)
+                    return 2
+                pairing_priv = target.x_priv_raw
             expect = args.expect_fingerprint
             if registry is None and not expect:
                 expect = input("Source device fingerprint (read it on "
@@ -282,11 +384,17 @@ def main():
                                ).strip()
             result = backup_pkg.import_package(
                 args.file, args.vault, identity=identity,
-                recovery_phrase=phrase, expect_fingerprint=expect,
-                allow_older=args.allow_older, registry=registry)
+                recovery_phrase=phrase, backup_code=code,
+                pairing_priv=pairing_priv,
+                expect_fingerprint=expect,
+                allow_older=args.allow_older, registry=registry,
+                pairing_registry=pairing_registry)
+            legacy_note = " (LEGACY package — phrase-only recovery)" \
+                if result.get("legacy") else ""
             print(f"📦 Backup imported via {result['via']} — "
                   f"vault {result['vault_id'][:12]}… is in place. "
-                  "Unlock it with its master password as usual.")
+                  f"Unlock it with its master password as usual."
+                  f"{legacy_note}")
             if result["snapshot_of_previous"]:
                 print(f"    Previous vault preserved at: "
                       f"{result['snapshot_of_previous']}")
@@ -382,9 +490,12 @@ def main():
 
         # ---- Phase 3A human-gated surfaces -------------------------
         if args.action in ("device-enroll", "devices", "device-revoke",
-                           "backup-export", "sync-pin", "sync-restore") or \
+                           "backup-export", "sync-pin", "sync-restore",
+                           "pair-enroll", "pairings", "pair-revoke",
+                           "pair-disable", "pair-enable") or \
                 (args.action in ("sync-push", "sync-pull") and args.force):
             import devices as devices_mod
+            import pairings as pairings_mod
             import vaultsync
 
             app.unlock()  # human principal from here on
@@ -394,6 +505,7 @@ def main():
                 state = vaultsync.load_state(args.vault)
                 if state is not None:
                     vaultsync.refresh_pins(app, state)
+                    vaultsync.refresh_pairing_pins(app, state)
                     vaultsync.save_state(args.vault, state)
 
             if args.action == "devices":
@@ -441,6 +553,72 @@ def main():
                       "packages exclude it; packages already exported "
                       "stay openable by a key it retained (see "
                       "SYNC_BACKUP.md).")
+            elif args.action == "pair-enroll":
+                if not args.payload:
+                    print("❌ --payload FILE required (the pairing "
+                          "payload the target presented)",
+                          file=sys.stderr)
+                    return 2
+                payload = json.loads(
+                    open(args.payload, encoding="utf-8").read())
+                record = pairings_mod.verify_payload(payload)
+                scopes = [s.strip() for s in
+                          (args.scopes or "export").split(",") if s.strip()]
+                print(f"Pairing target {record['target_id']}")
+                print(f"    Type: {record['type']}  "
+                      f"Label: {record['label'] or '-'}")
+                print(f"    Fingerprint: {record['fingerprint']}")
+                print(f"    Scopes: {', '.join(scopes)}")
+                print("    Only proceed if that fingerprint matches "
+                      "what the target itself shows.")
+                if not args.yes:
+                    answer = input("Type 'yes' to pair: ").strip()
+                    if answer != "yes":
+                        print("Aborted.")
+                        return 1
+                pairings_mod.enroll_pairing(
+                    app, payload, scopes,
+                    expires_days=args.expires_days)
+                _refresh_pins()
+                print("✅ Target paired. It receives backup packages "
+                      "and sync access only within its scopes.")
+            elif args.action == "pairings":
+                for t in pairings_mod.list_pairings(app):
+                    if t["revoked_at"]:
+                        state = "REVOKED"
+                    elif not t["enabled"]:
+                        state = "DISABLED"
+                    elif not t["active"]:
+                        state = "EXPIRED"
+                    else:
+                        state = "active"
+                    print(f"- {t['target_id'][:12]}…  [{state}]  "
+                          f"{t['type']}  {t['label'] or '-'}  "
+                          f"scopes={','.join(t['scopes']) or '-'}  "
+                          f"fp={t['fingerprint']}")
+            elif args.action in ("pair-revoke", "pair-disable",
+                                 "pair-enable"):
+                if not args.target:
+                    print("❌ --target required", file=sys.stderr)
+                    return 2
+                full = next((t for t in app._pairings
+                             if t.startswith(args.target)), args.target)
+                if args.action == "pair-revoke":
+                    pairings_mod.revoke_pairing(app, full)
+                    _refresh_pins()
+                    print(f"🗑 Pairing {full[:12]}… revoked. New "
+                          "backup packages give it no slot and sync "
+                          "to its folder stops; packages already "
+                          "exported stay openable by a key it "
+                          "retained (see SYNC_BACKUP.md).")
+                elif args.action == "pair-disable":
+                    pairings_mod.set_pairing_enabled(app, full, False)
+                    _refresh_pins()
+                    print(f"⏸ Pairing {full[:12]}… disabled.")
+                else:
+                    pairings_mod.set_pairing_enabled(app, full, True)
+                    _refresh_pins()
+                    print(f"▶️ Pairing {full[:12]}… enabled.")
             elif args.action == "backup-export":
                 if not args.file:
                     print("❌ --file required", file=sys.stderr)
@@ -450,22 +628,39 @@ def main():
                 identity = _load_identity(args)
                 if identity is None:
                     return 2
-                package = export_package(app, identity, out_path=args.file)
-                names = [r.get("device_id", "recovery")[:12] + "…"
-                         if r["type"] == "device" else "recovery phrase"
-                         for r in package["recipients"]]
+                package, code = export_package(
+                    app, identity, out_path=args.file)
+                names = []
+                for r in package["recipients"]:
+                    if r["type"] == "device":
+                        names.append(r["device_id"][:12] + "…")
+                    elif r["type"] == "pairing":
+                        names.append("paired:" + r["target_id"][:12] + "…")
+                    else:
+                        names.append("recovery (phrase + backup code)")
                 print(f"📦 Backup package written: {args.file}")
                 print(f"    Recipients: {', '.join(names)}")
                 print("    The package is ciphertext — safe to store "
                       "or send. Keep it like a vault copy.")
+                if code:
+                    print()
+                    print("🔑 YOUR BACKUP CODE (shown ONCE — it is "
+                          "not stored anywhere):")
+                    print(f"    {code}")
+                    print("    Opening this backup outside the app "
+                          "needs BOTH your recovery phrase AND this "
+                          "code. Write the code down and keep it "
+                          "somewhere DIFFERENT from the phrase.")
             elif args.action == "sync-pin":
                 state = vaultsync.load_state(args.vault)
                 if state is None:
                     print("❌ sync is not configured", file=sys.stderr)
                     return 2
                 vaultsync.refresh_pins(app, state)
+                vaultsync.refresh_pairing_pins(app, state)
                 vaultsync.save_state(args.vault, state)
-                print("📌 Signer keys pinned from the vault registry.")
+                print("📌 Signer keys + pairing pins refreshed from "
+                      "the vault registry.")
             elif args.action == "sync-restore":
                 if not args.snapshot:
                     print("❌ --snapshot BUNDLE_HASH required",

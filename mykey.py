@@ -408,6 +408,10 @@ class MyKey:
         # live only inside the encrypted core, like the agent registry.
         self._devices = {}
         self._backup_recovery_pub = None
+        # Blob wave: pairing registry (target id -> public pairing
+        # record) for cloud-storage / export targets. Same home as
+        # the device registry: public material only, inside the core.
+        self._pairings = {}
         # Vault settings (encrypted core): the default password
         # rotation period in days; None/0 = no rotation by default.
         self._settings = {"default_rotate_days": DEFAULT_ROTATE_DAYS}
@@ -549,6 +553,7 @@ class MyKey:
             "retired_pending_keys": self._retired_pending_keys,
             "audit_mac_since": self._audit_mac_since,
             "devices": self._devices,
+            "pairings": self._pairings,
             "backup_recovery_pub": (
                 _b64e(self._backup_recovery_pub)
                 if self._backup_recovery_pub else None),
@@ -679,6 +684,8 @@ class MyKey:
         self._audit_mac_since = int(core.get("audit_mac_since") or 0)
         # Phase 3A fields; absent in cores written before 3A.
         self._devices = core.get("devices") or {}
+        # Blob-wave field; absent in cores written before it.
+        self._pairings = core.get("pairings") or {}
         raw_pub = core.get("backup_recovery_pub")
         self._backup_recovery_pub = _b64d(raw_pub) if raw_pub else None
         # Vault settings; absent in cores written before the
@@ -1015,6 +1022,7 @@ class MyKey:
         self._retired_pending_keys = {}
         self._entry_hashes = {}
         self._devices = {}
+        self._pairings = {}
         self._backup_recovery_pub = None
         self._migrated_from = from_version
         self._principal = "human"
@@ -1582,6 +1590,7 @@ class MyKey:
         inst._anchor_recovery = False
         inst._raw_pending = {}
         inst._devices = {}
+        inst._pairings = {}
         inst._backup_recovery_pub = None
         inst._settings = {"default_rotate_days": DEFAULT_ROTATE_DAYS}
         inst._principal = None
@@ -1663,6 +1672,15 @@ class MyKey:
         merged, stats = resolve_import(records, existing, on_conflict=on_conflict)
         if stats["added"] or stats["overwritten"] or stats["kept_both"]:
             merged = [_normalize_entry(e) for e in merged]
+            # An import overwrite replaces the password with one of
+            # unknown age: its set date becomes "not recorded", the
+            # same honesty rule as a fresh import. (Only overwrites
+            # can change an existing entry's password here.)
+            before = {e["id"]: e["password"] for e in existing}
+            for record in merged:
+                if (record["id"] in before
+                        and record["password"] != before[record["id"]]):
+                    record["password_set_at"] = None
             existing_ids = {e["id"] for e in self._entries}
             for record in merged:
                 if record["id"] not in existing_ids:

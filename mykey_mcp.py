@@ -152,7 +152,7 @@ class McpServer:
             return _result(req_id, {
                 "protocolVersion": _PROTOCOL_VERSION,
                 "capabilities": {"tools": {}},
-                "serverInfo": {"name": "mykey", "version": "2.1.0"},
+                "serverInfo": {"name": "mykey", "version": "2.2.0"},
             })
         if method == "ping":
             return _result(req_id, {})

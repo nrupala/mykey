@@ -82,6 +82,8 @@ class MyKeyGUI:
         sync_menu.add_command(label="Sync pull", command=self.do_sync_pull)
         sync_menu.add_command(label="Export backup package…",
                               command=self.do_backup_export)
+        sync_menu.add_command(label="Import backup package…",
+                              command=self.do_backup_import)
         about_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="About", menu=about_menu)
         about_menu.add_command(label="Project Details", command=self.show_about)
@@ -436,7 +438,8 @@ class MyKeyGUI:
         from backup_pkg import export_package
 
         try:
-            package = export_package(self.app, identity, out_path=path)
+            package, code = export_package(self.app, identity,
+                                           out_path=path)
         except Exception as exc:
             messagebox.showerror(brand.PRODUCT_NAME, str(exc))
             return
@@ -445,6 +448,66 @@ class MyKeyGUI:
             f"Backup package written with {len(package['recipients'])} "
             "recipients. It is ciphertext — store or send it like a "
             "vault copy.",
+        )
+        if code:
+            messagebox.showinfo(
+                brand.PRODUCT_NAME,
+                "YOUR BACKUP CODE — shown once, not stored anywhere:\n\n"
+                f"{code}\n\n"
+                "Opening this backup outside the app needs BOTH your "
+                "recovery phrase AND this code. Write the code down "
+                "and keep it somewhere different from the phrase.",
+            )
+
+    def do_backup_import(self):
+        identity = self._identity_or_warn()
+        if identity is None:
+            return
+        path = filedialog.askopenfilename(
+            title="Import encrypted backup package",
+            filetypes=[("MyKey backup package", "*.mykeybak"),
+                       ("All files", "*.*")])
+        if not path:
+            return
+        from backup_pkg import BackupRefused, import_package
+
+        try:
+            result = import_package(
+                path, self.app.vault_file, identity=identity,
+                registry=self.app._devices,
+                pairing_registry=self.app._pairings)
+        except BackupRefused:
+            # This device cannot open it — offer the outside-app
+            # recovery path: phrase, plus the backup code for
+            # two-factor (v2) packages.
+            phrase = simpledialog.askstring(
+                brand.PRODUCT_NAME,
+                "This device cannot open that package directly.\n"
+                "Recovery phrase:", show="*", parent=self.root)
+            if not phrase:
+                return
+            code = simpledialog.askstring(
+                brand.PRODUCT_NAME,
+                "Backup code (8 words — needed for newer backups; "
+                "leave empty for older ones):", parent=self.root)
+            try:
+                result = import_package(
+                    path, self.app.vault_file, identity=identity,
+                    recovery_phrase=phrase,
+                    backup_code=(code or None),
+                    registry=self.app._devices,
+                    pairing_registry=self.app._pairings)
+            except Exception as exc:
+                messagebox.showerror(brand.PRODUCT_NAME, str(exc))
+                return
+        except Exception as exc:
+            messagebox.showerror(brand.PRODUCT_NAME, str(exc))
+            return
+        messagebox.showinfo(
+            brand.PRODUCT_NAME,
+            f"Backup imported (via {result['via']}). The vault on "
+            "disk has been replaced — restart the app to use the "
+            "restored vault.",
         )
 
     def show_about(self):
