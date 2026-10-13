@@ -111,7 +111,7 @@ _ARGON = {"time_cost": 3, "memory_cost": 65536, "parallelism": 4}
 _DEFAULT_BACKOFF_BASE_SECONDS = 5.0
 _DEFAULT_BACKOFF_CAP_SECONDS = 900.0
 _METADATA_FIELDS = ("service", "username", "url", "tags", "favourite",
-                    "created", "updated")
+                    "created", "updated", "android_app")
 
 
 class AgentAuthError(MyKeyError):

@@ -144,6 +144,12 @@ class MyKeyGUI:
         self.rotation_label = ttk.Label(main, text="", font=("Arial", 9))
         self.rotation_label.pack(anchor=tk.W, pady=(2, 0))
 
+        # Read-only: Android autofill bindings are created and
+        # managed in the Android app; the desktop shows them so the
+        # user can see the link exists, and never edits them.
+        self.android_app_label = ttk.Label(main, text="", font=("Arial", 9))
+        self.android_app_label.pack(anchor=tk.W, pady=(0, 6))
+
         row = ttk.Frame(main)
         row.pack(fill=tk.X, pady=4)
         self.toggle_btn = ttk.Button(row, text="👁 Show", command=self.toggle_pw)
@@ -199,6 +205,15 @@ class MyKeyGUI:
         self.current_pw_value = entry["password"]
         default = self.app.vault_settings()["default_rotate_days"]
         self.rotation_label.config(text=rotation_line(entry, default))
+        binding = entry.get("android_app")
+        if binding:
+            app_name = binding.get("label") or binding["package"]
+            self.android_app_label.config(text=(
+                f"Android app: {app_name} — linked for autofill in the "
+                "Android app. The link is set there and shown here so "
+                "you can see it; it is not edited on the desktop."))
+        else:
+            self.android_app_label.config(text="")
 
     def toggle_pw(self):
         self.is_masked = not self.is_masked
