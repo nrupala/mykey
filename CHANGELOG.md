@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — `_prompt_secret` is Windows-gated (packaging follow-up)
+- The piped-stdin secret path introduced with the desktop
+  packaging wave is now taken **only on Windows**, the platform
+  with the getpass redirected-stdin hang. The first version took
+  it on every platform when stdin was not a terminal, bypassing
+  the `getpass` monkeypatch the test suite relies on and failing
+  `test_cli_rotation_flow` under pytest (OSError on captured
+  stdin). Non-Windows behaviour is identical to the original
+  getpass flow; Windows behaviour is unchanged from the shipped
+  v2.2.0 binaries (interactive → getpass, piped → stdin line).
+  Full suite after the fix: 241 passed, 1 skipped.
+
 ### Added — desktop downloads (packaging wave, 2026-10-13)
 - Ready-made desktop builds published on the Releases page as
   **v2.2.0**: Windows app + CLI `.exe` (built and smoke-tested on a
