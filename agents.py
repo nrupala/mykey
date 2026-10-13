@@ -525,6 +525,28 @@ def _require_human_vault(vault: MyKey):
     vault._require_human("manage agents")
 
 
+def _validate_expires_days(expires_days):
+    """Normalize an agent expiry: None (no expiry) or a whole
+    number of days >= 1.
+
+    0 is refused outright (issue #12): it used to fall through a
+    falsy check and silently mint a NEVER-expiring token for an
+    operator who asked for the shortest lifetime on the menu. On
+    an authorization surface a typo must fail loud, not permanent —
+    omitting the value is the only way to ask for no expiry, and
+    negatives are refused rather than kept as a backdoor
+    "already expired" test path.
+    """
+    if expires_days is None:
+        return None
+    if isinstance(expires_days, bool) or not isinstance(expires_days, int):
+        raise ValueError("expiry must be a whole number of days or unset")
+    if expires_days < 1:
+        raise ValueError(
+            "expiry must be at least 1 day — omit the flag for no expiry")
+    return expires_days
+
+
 @_locked
 def enroll_agent(vault: MyKey, agent_id, scopes, expires_days=None):
     """Enroll an agent. Returns the token — shown ONCE, never stored."""
@@ -532,6 +554,7 @@ def enroll_agent(vault: MyKey, agent_id, scopes, expires_days=None):
     if not _AGENT_ID_RE.match(agent_id or ""):
         raise ValueError("agent id must be 1–32 chars: [a-z0-9-], starting alphanumeric")
     scopes = validate_scopes(scopes)
+    expires_days = _validate_expires_days(expires_days)
     if agent_id in vault._agents:
         raise ValueError(f"agent already enrolled: {agent_id}")
     raw = secrets.token_bytes(32)
@@ -548,7 +571,8 @@ def enroll_agent(vault: MyKey, agent_id, scopes, expires_days=None):
         "token_hash": _token_hash(token),
         "scopes": scopes,
         "created_at": now,
-        "expires_at": (now + int(expires_days) * 86400) if expires_days else None,
+        "expires_at": (now + expires_days * 86400)
+                      if expires_days is not None else None,
         "enabled": True,
         "last_used_at": None,
         "bundle_key": _b64e(bundle_key),

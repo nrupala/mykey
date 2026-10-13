@@ -24,10 +24,22 @@ import getpass
 import json
 import os
 import sys
+import time
 
 import brand
 from mykey import (MIN_GENERATED_PASSWORD_LENGTH, MyKey, MyKeyError,
                    make_entry, rotation_line, rotation_status)
+
+
+def _fmt_expires(expires_at):
+    """An effective expiry in plain terms: a date, or 'never'.
+
+    Enrollment output must always show which one the operator
+    actually got (issue #12) — never leave it to a later listing.
+    """
+    if not expires_at:
+        return "never"
+    return time.strftime("%Y-%m-%d", time.localtime(int(expires_at)))
 
 
 def _print_entry(e, status=None):
@@ -85,7 +97,8 @@ def main():
     p.add_argument("--scopes", default="",
                    help="Comma-separated agent scopes, e.g. list,get:github")
     p.add_argument("--expires-days", type=int,
-                   help="Agent token lifetime in days (default: no expiry)")
+                   help="Lifetime in days for an agent token or pairing "
+                        "target (minimum 1; omit for no expiry)")
     p.add_argument("--service")
     p.add_argument("--username", default="")
     p.add_argument("--url", default="")
@@ -474,8 +487,13 @@ def main():
                               (args.scopes or "list").split(",") if s.strip()]
                     token = enroll_agent(app, args.agent_id, scopes,
                                          expires_days=args.expires_days)
-                    print(f"🤖 Agent '{args.agent_id}' enrolled. Token (shown ONCE, "
-                          "store it in the agent's environment as MYKEY_AGENT_KEY):")
+                    rec = next(a for a in list_agents(app)
+                               if a["agent_id"] == args.agent_id)
+                    print(f"🤖 Agent '{args.agent_id}' enrolled.")
+                    print(f"   Scopes: {', '.join(rec['scopes']) or '-'}")
+                    print(f"   Expires: {_fmt_expires(rec['expires_at'])}")
+                    print("Token (shown ONCE, store it in the agent's "
+                          "environment as MYKEY_AGENT_KEY):")
                     print(token)
                 elif args.action == "agent-revoke":
                     revoke_agent(app, args.agent_id)
@@ -576,10 +594,11 @@ def main():
                     if answer != "yes":
                         print("Aborted.")
                         return 1
-                pairings_mod.enroll_pairing(
+                record = pairings_mod.enroll_pairing(
                     app, payload, scopes,
                     expires_days=args.expires_days)
                 _refresh_pins()
+                print(f"    Expires: {_fmt_expires(record['expires_at'])}")
                 print("✅ Target paired. It receives backup packages "
                       "and sync access only within its scopes.")
             elif args.action == "pairings":

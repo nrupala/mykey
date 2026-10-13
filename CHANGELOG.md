@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — expiry validation for agents and pairings (issue #12)
+- `agent-enroll --expires-days 0` no longer silently creates a
+  never-expiring token: 0 came through a falsy check as "unset".
+  Expiry must now be a whole number of days ≥ 1, at both the API
+  (`enroll_agent`) and CLI level; 0 and negatives are refused with
+  a plain error ("expiry must be at least 1 day — omit the flag
+  for no expiry"). Omitting the flag remains the only way to
+  create a non-expiring agent, and the enroll output now echoes
+  the effective grant (agent id, scopes, "Expires: <date>" or
+  "Expires: never").
+- Same hardening at the sibling parse site, `enroll_pairing`:
+  its `is not None` check already failed closed on 0 (a
+  silently-dead pairing), and it now refuses 0/negatives with the
+  same plain error; `pair-enroll` output echoes the expiry too.
+  Regression suite: `tests/test_expires_days.py`.
+
 ### Changed — clipboard self-clear rule (owner directive, 2026-10-13)
 - Copied passwords now clear through one guarded path
   (`clipboard_guard.py`): 60 seconds by default, user-settable

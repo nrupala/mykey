@@ -284,6 +284,26 @@ def pairing_active(rec, now=None) -> bool:
     return True
 
 
+def _validate_expires_days(expires_days):
+    """Normalize a pairing expiry: None (no expiry) or a whole
+    number of days >= 1.
+
+    Pairings already used an `is not None` check, so 0 failed
+    closed (expires_at = now, a silently-dead pairing) instead of
+    the agent registry's silent NEVER (issue #12). Barely better
+    is not good enough on an authorization surface: refuse 0 and
+    negatives with the same plain error as agent enrollment.
+    """
+    if expires_days is None:
+        return None
+    if isinstance(expires_days, bool) or not isinstance(expires_days, int):
+        raise PairingError("expiry must be a whole number of days or unset")
+    if expires_days < 1:
+        raise PairingError(
+            "expiry must be at least 1 day — omit the flag for no expiry")
+    return expires_days
+
+
 def enroll_pairing(vault: MyKey, payload, scopes, expires_days=None) -> dict:
     """Enroll a pairing target from its payload.
 
@@ -292,6 +312,7 @@ def enroll_pairing(vault: MyKey, payload, scopes, expires_days=None) -> dict:
     payload exactly as far as verify_payload + that confirmation.
     """
     _require_human_vault(vault)
+    expires_days = _validate_expires_days(expires_days)
     record = verify_payload(payload)
     record["scopes"] = validate_scopes(scopes)
     target_id = record["target_id"]
@@ -305,7 +326,7 @@ def enroll_pairing(vault: MyKey, payload, scopes, expires_days=None) -> dict:
         raise PairingError(f"target already paired: {target_id}")
     record["enrolled_at"] = _now()
     record["expires_at"] = (
-        _now() + int(expires_days) * 86400
+        _now() + expires_days * 86400
         if expires_days is not None else None)
     record["enabled"] = True
     record["revoked_at"] = None
