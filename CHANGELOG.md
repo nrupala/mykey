@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — clipboard self-clear rule (owner directive, 2026-10-13)
+- Copied passwords now clear through one guarded path
+  (`clipboard_guard.py`): 60 seconds by default, user-settable
+  between 60 and 300 seconds (Settings → Clipboard clear delay,
+  persisted in `~/.mykey/preferences.json`, clamped at a single
+  validation point). The clipboard is cleared only if it still
+  holds exactly what MyKey put there, closing the window clears a
+  pending copied secret immediately, and a re-copy restarts the
+  timer. The CLI and MCP surfaces never touch the clipboard.
+
 ### Added — Blob wave: two-factor backup packages + key-value pairing
 - **MKBAK v2 — two-factor recovery.** New backup packages wrap
   the recovery slot twice: sealed to the recovery-phrase key as

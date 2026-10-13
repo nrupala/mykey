@@ -9,7 +9,7 @@ this PR only aligns the per-file headers with the map below.
 
 | Bucket | Files | Terms |
 |---|---|---|
-| **Interface layer — Apache 2.0** | `brand.py`, `mykey_gui.py`, `mykey_cli.py`, `mykey_mcp.py` (stdio MCP shell), `first_run.py`, import *format definitions* (the documented column layouts each exporter emits, as listed in `importers.py` docstrings) | Apache License 2.0, including its §3 patent grant (below) |
+| **Interface layer — Apache 2.0** | `brand.py`, `mykey_gui.py`, `mykey_cli.py`, `mykey_mcp.py` (stdio MCP shell), `first_run.py`, `clipboard_guard.py` (GUI clipboard self-clear), import *format definitions* (the documented column layouts each exporter emits, as listed in `importers.py` docstrings) | Apache License 2.0, including its §3 patent grant (below) |
 | **Core — Proprietary** | `mykey.py` (vault engine + cryptography), `agents.py` (agent registry, scope enforcement, audit chain), `recovery.py`, `totp.py`, `importers.py` (parsing/dedupe/conflict engine), `devices.py` (device identity + registry), `vaultsync.py` (user-cloud sync), `backup_pkg.py` (encrypted backup packages) | © 2351485 ALBERTA INC., all rights reserved. No licence is granted to copy, modify or redistribute. |
 | **Data file** | `bip39_english.txt` | The BIP-39 English wordlist, reproduced from the BIP-39 specification (bitcoin/bips). |
 
