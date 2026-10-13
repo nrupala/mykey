@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mykey"
+version = "1.0.1"
+description = "A zero-trust password manager. A NIST/CISA Compliant Canadian Vault"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Nrupal Akolkar" }]
+dependencies = [
+    "cryptography>=42.0.0,<46",
+    "argon2-cffi>=23.1.0,<26",
+    "pyperclip>=1.8.2,<2",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[tool.setuptools]
+py-modules = ["mykey", "mykey_cli", "mykey_gui", "recovery", "first_run", "setup_mykey"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
