@@ -81,9 +81,9 @@ def main():
                 # Do not echo the saved password; retrieve it with 'get'.
                 print(f"✅ Generated and saved for {args.service}.")
             else:
-                # codeql[py/clear-text-logging-sensitive-data] -- explicit
-                # user-requested display of their own generated password
-                # on their own terminal; the entire purpose of 'gen'.
+                # Explicit user-requested display of their own generated
+                # password on their own terminal; the purpose of 'gen'.
+                # codeql[py/clear-text-logging-sensitive-data]
                 print(f"✨ Generated: {pw}")
         elif args.action == "add":
             if not args.service:
@@ -97,9 +97,9 @@ def main():
             if not args.service:
                 print("❌ --service required", file=sys.stderr); return 2
             e = app.get_entry(args.service, args.username or None)
-            # codeql[py/clear-text-logging-sensitive-data] -- explicit
-            # user-requested display of their own credential on their
-            # own terminal; the entire purpose of the 'get' action.
+            # Explicit user-requested display of their own credential
+            # on their own terminal; the purpose of the 'get' action.
+            # codeql[py/clear-text-logging-sensitive-data]
             print(f"🔑 {e['service']} ({e['username']}): {e['password']}")
         elif args.action == "list":
             entries = app.list_entries()
