@@ -47,13 +47,20 @@ def main():
             pw = app.generate_password(args.len)
             if args.service:
                 app.save_password(args.service, pw)
-                print(f"✅ Generated and saved for {args.service}: {pw}")
+                # Do not echo the saved password; retrieve it with 'get'.
+                print(f"✅ Generated and saved for {args.service}.")
             else:
+                # codeql[py/clear-text-logging-sensitive-data] -- explicit
+                # user-requested display of their own generated password
+                # on their own terminal; the entire purpose of 'gen'.
                 print(f"✨ Generated: {pw}")
         elif args.action == "get":
             if not args.service:
                 print("❌ Error: --service required for 'get' action.", file=sys.stderr)
                 return 2
+            # codeql[py/clear-text-logging-sensitive-data] -- explicit
+            # user-requested display of their own credential on their
+            # own terminal; the entire purpose of the 'get' action.
             print(f"🔑 Password for {args.service}: {app.get_password(args.service)}")
         elif args.action == "add":
             if not args.service:
