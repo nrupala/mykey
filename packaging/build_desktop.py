@@ -52,7 +52,7 @@ WORK = os.path.join(ROOT, "packaging", "build")
 SPEC = os.path.join(ROOT, "packaging", "spec")
 
 
-def build(entry, name, windowed):
+def build(entry, name, windowed, icon=None):
     args = [
         sys.executable, "-m", "PyInstaller",
         "--onefile", "--clean", "--noconfirm",
@@ -60,6 +60,8 @@ def build(entry, name, windowed):
         "--distpath", DIST, "--workpath", WORK, "--specpath", SPEC,
         "--add-data", os.path.join(ROOT, "bip39_english.txt") + os.pathsep + ".",
     ]
+    if icon:
+        args += ["--icon", icon]
     if windowed and sys.platform in ("win32", "darwin"):
         args.append("--windowed")
     args.append(os.path.join(ROOT, entry))
@@ -67,9 +69,20 @@ def build(entry, name, windowed):
     subprocess.run(args, check=True, cwd=ROOT)
 
 
+# App icon per platform, from the brand masters in packaging/assets/
+# (logo-tile.svg / logo-key.svg — the refined-key mark, navy #111D54).
+ICON_FILES = {"win32": "icon.ico", "darwin": "icon.icns"}
+
+
 def main():
     os.makedirs(DIST, exist_ok=True)
-    build("mykey_gui.py", "MyKey", windowed=True)
+    icon = None
+    icon_name = ICON_FILES.get(sys.platform)
+    if icon_name:
+        candidate = os.path.join(ROOT, "packaging", "assets", icon_name)
+        if os.path.exists(candidate):
+            icon = candidate
+    build("mykey_gui.py", "MyKey", windowed=True, icon=icon)
     build("mykey_cli.py", "mykey-cli", windowed=False)
     print("\nBuilt into", DIST)
     for f in sorted(os.listdir(DIST)):
