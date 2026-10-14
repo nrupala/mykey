@@ -25,6 +25,16 @@ Outputs in `packaging/dist/`:
 
 `mykey.desktop` is the Linux launcher shipped in the Linux bundle.
 
+## App icon
+
+The brand masters live in `packaging/assets/` (`logo-tile.svg`,
+`logo-key.svg` — the refined-key mark on navy #111D54), with rendered
+`icon.ico` (Windows), `icon.icns` (macOS) and `icon.png` beside them.
+`build_desktop.py` passes the platform icon to PyInstaller for the
+GUI build on Windows and macOS. The Linux bundle keeps the themed
+`Icon=dialog-password` in `mykey.desktop` until the bundle step
+installs `icon.png` into an icon-theme path alongside the launcher.
+
 ## Signing status — read this before distributing
 
 The release builds are **unsigned**. There is no code-signing
