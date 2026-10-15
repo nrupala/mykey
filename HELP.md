@@ -8,6 +8,7 @@
 ## The short version
 
 - MyKey keeps all your passwords in one locked file, called a **vault**.
+- Your vault is a file. MyKey is its opener. The file alone opens nothing.
 - One master password opens the vault. Nothing else can.
 - There is no account and no server. MyKey works fully offline.
 - Your passwords are scrambled (encrypted) before they are saved. Anyone who gets the file sees only scrambled data.
@@ -15,7 +16,13 @@
 
 ## Your vault
 
-Your vault is a single file. It lives on this device.
+Your vault is a single file, separate from the app. The app by itself holds nothing worth stealing, and the file alone opens nothing: it is scrambled, and only your master password (or your recovery words) can unscramble it.
+
+In the Android app, you choose the folder where the vault file lives — its **home**. Pick a folder the phone keeps, or one your cloud app syncs, and MyKey keeps the file there, updated on every save. The app also keeps a working copy inside itself, so your vault still opens if the folder can't be reached for a while. When the home file is newer, it wins and refreshes the working copy. If both copies changed since they last matched, MyKey keeps both and asks you which one to keep — it never silently replaces one with the other.
+
+Because the vault's home is outside the app, removing the app does not remove your vault — once you have given it a home folder, the file stays in that folder, and a fresh install can open it from there.
+
+On a computer the same idea holds: the vault is a file, and MyKey is its opener.
 
 Inside the vault, each password is an **entry**. An entry can hold:
 
@@ -100,7 +107,7 @@ When you copy a password, it does not stay on the clipboard.
 MyKey has no server of its own. If you want the same vault on more than one device, your own cloud carries the file.
 
 - On a computer, point MyKey at a folder that your cloud app already syncs (Drive, iCloud, OneDrive, Dropbox, or a folder on your own network). MyKey saves and loads the encrypted vault there.
-- In the Android app there is no folder picker, so you move the file with your cloud app: save the vault file into your cloud app, and open it from there on the other device. The app says this plainly in Settings.
+- In the Android app, give your vault a home in a folder your cloud app syncs (see "Your vault" above), and the same scrambled file travels by cloud. You can also carry the file by hand from Settings: save the vault file into your cloud app, and open it from there on the other device.
 - The file that travels is always the scrambled vault. Your cloud provider cannot read it.
 - If the vault changes on two devices at once, MyKey keeps both copies and tells you. It never silently overwrites one with the other.
 

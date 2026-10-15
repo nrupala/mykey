@@ -15,7 +15,7 @@ If you have neither the password nor the words, the vault cannot be opened — b
 
 On your new device, install MyKey, then either:
 
-- open your vault file (if a copy is in your cloud) with your master password, or
+- open your vault file — from its home folder if you kept the home in your cloud, or any copy you saved — with your master password, or
 - restore from a backup package. Outside the app that takes your recovery words **and** the backup code you wrote down at export.
 
 Then, in the desktop app, revoke the lost phone's device entry so new backup packages no longer include it. Packages you exported before the loss can still be opened by the lost phone's key — no product can undo that — so keep your recovery words and backup code safe and change important passwords if the phone held them unlocked.
@@ -26,7 +26,13 @@ Yes, fully. There is no account, no sign-in, and no server. Creating a vault, op
 
 ## Where is my data stored?
 
-On your device, as one encrypted vault file. If you sync, a copy of that same scrambled file sits in the cloud folder you chose. If you export a backup package, it is wherever you put it. MyKey stores nothing anywhere else.
+In your vault file — the vault is separate from the app, and MyKey is only its opener. On Android, the file's home is the folder you chose, and the app keeps a working copy inside itself so the vault opens even when the folder can't be reached. On a computer, the file is wherever you keep it. If you sync, that same scrambled file sits in the cloud folder you chose. If you export a backup package, it is wherever you put it. MyKey stores nothing anywhere else.
+
+## What happens if I uninstall the app?
+
+On Android, if you gave your vault a home folder, uninstalling removes only the app — your vault file stays in its folder, scrambled as always. Install MyKey again, choose the option to open the vault found in a folder, pick the same folder, and open it with your master password.
+
+If you never gave your vault a home, the only copy was the working copy inside the app, and uninstalling deletes it with the app. That is why MyKey offers a home folder when you first set up your vault, and keeps a gentle reminder in Settings until you choose one. Backup packages you exported stay wherever you put them, either way.
 
 ## Can the company read my passwords?
 
