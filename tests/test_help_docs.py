@@ -55,6 +55,19 @@ def test_faq_answers_the_questions_that_matter():
         assert question in faq, question
 
 
+def test_help_states_the_vault_home_model():
+    # The vault is separate from the app by design (owner's model,
+    # 2026-10-14): the file is the vault's home, the app is only
+    # its opener, and the uninstall answer must tell that truth.
+    help_text = _read("HELP.md")
+    assert "Your vault is a file. MyKey is its opener. " \
+        "The file alone opens nothing." in help_text
+    assert "removing the app does not remove your vault" in help_text
+    faq = _read("FAQ.md")
+    assert "What happens if I uninstall the app" in faq
+    assert "uninstalling removes only the app" in faq
+
+
 def test_no_parked_or_unshipped_claims():
     for name in ("HELP.md", "FAQ.md"):
         text = _read(name)
