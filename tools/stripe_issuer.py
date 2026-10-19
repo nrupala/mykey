@@ -58,6 +58,25 @@ time and reason. The shipped clients verify licences offline
 at the registry: a revoked licence is never reissued, and
 support treats it as void.
 
+Idempotency (release-gate F-MK-1): Stripe delivery is
+at-least-once and this tool can crash mid-run, so one payment
+must never mint two licences. The Worker half is write-once at
+the recorder; this half dedupes by checkout session id: before
+minting, the selected registry is checked for a record already
+carrying the order's session — if one exists, the order is
+marked issued with that existing licence id and nothing is
+minted or emailed again.
+
+Disputes (release-gate F-MK-2): the Worker records
+charge.dispute.created / charge.dispute.closed events that
+resolve to a MyKey order as dispute: records. This tool applies
+them to the registry: a created dispute flags the licence
+(disputed, with the dispute id); a dispute closed lost revokes
+the licence with reason "stripe chargeback (dispute lost)";
+closed won clears the flag. Refund and dispute records exist
+only for charges that resolve to a MyKey order — other product
+lines on the shared account never reach this tool.
+
 Usage:
   python3 tools/stripe_issuer.py [--dry-run]
 
@@ -344,6 +363,27 @@ def process_order(key, dry_run, log):
         order["payment_date"] = order["received_at"][:10]
         registry, out_dir = TEST_REGISTRY, TEST_OUT_DIR
 
+    # F-MK-1 dedupe: if this session already minted a licence
+    # (the issuer crashed after minting but before marking the
+    # order, or a duplicate delivery re-queued it), never mint
+    # a second one. Mark the order issued with the EXISTING
+    # licence id; send no further email.
+    for r in _read_registry(registry):
+        if r.get("stripe_session") == order["session_id"]:
+            order["licence_id"] = r["licence_id"]
+            order["licence_status"] = r.get("status")
+            order["status"] = "issued"
+            order["dedupe_note"] = (
+                "session already in registry as "
+                f"{r['licence_id']} — no new licence minted, "
+                "no email sent")
+            log(f"{key}: DEDUPE — session already issued as "
+                f"{r['licence_id']} ({r.get('status')}); order "
+                "marked issued, no new mint, no email")
+            if not dry_run:
+                kv_put(key, order)
+            return
+
     if dry_run:
         log(f"{key}: DRY RUN — would issue to {order['email']} "
             f"({'live' if live else 'test'} registry)")
@@ -404,6 +444,86 @@ def process_revoke(key, dry_run, log):
         f"{'production' if live else 'test'} registry")
 
 
+def process_dispute(key, dry_run, log):
+    """Apply one recorded Stripe dispute to the registry (F-MK-2).
+
+    created  -> flag the licence disputed (id + status + time)
+    closed lost -> revoke with reason "stripe chargeback
+                   (dispute lost)" (an already-revoked licence
+                   keeps its original revocation; the dispute
+                   outcome is still recorded on it)
+    closed won  -> clear the disputed flag, record the outcome
+    """
+    rec = kv_get(key)
+    if rec.get("status") != "awaiting_issuer":
+        return
+    live = rec.get("livemode") is not False
+    registry = PROD_REGISTRY if live else TEST_REGISTRY
+    records = _read_registry(registry)
+    target = None
+    for r in records:
+        if rec.get("session_id") \
+                and r.get("stripe_session") == rec["session_id"]:
+            target = r
+            break
+    if target is None and rec.get("payment_intent"):
+        for r in records:
+            if r.get("stripe_payment_intent") \
+                    == rec.get("payment_intent"):
+                target = r
+                break
+    if target is None:
+        rec["status"] = "no_matching_licence"
+        log(f"{key}: dispute with no matching licence — flagged")
+        if not dry_run:
+            kv_put(key, rec)
+        return
+    if dry_run:
+        log(f"{key}: DRY RUN — would record dispute "
+            f"{rec.get('event')} on {target['licence_id']}")
+        return
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    if rec.get("event") == "created":
+        # A late-created record for an already-decided dispute
+        # must not re-flag it.
+        if not target.get("dispute_outcome"):
+            target["disputed"] = True
+            target["dispute_id"] = rec.get("dispute_id")
+            target["dispute_status"] = rec.get("dispute_status")
+            target["disputed_at"] = now
+        outcome = "flagged disputed"
+    elif rec.get("event") == "closed":
+        target["dispute_id"] = rec.get("dispute_id")
+        target["dispute_outcome"] = rec.get("dispute_status")
+        target["dispute_closed_at"] = now
+        if rec.get("dispute_status") == "lost":
+            target["disputed"] = True
+            if target.get("status") != "revoked":
+                target["status"] = "revoked"
+                target["revoked_at"] = now
+                target["revoke_reason"] = \
+                    "stripe chargeback (dispute lost)"
+            outcome = "closed lost — licence revoked (chargeback)"
+        elif rec.get("dispute_status") == "won":
+            target["disputed"] = False
+            outcome = "closed won — dispute flag cleared"
+        else:
+            outcome = f"closed ({rec.get('dispute_status')}) recorded"
+    else:
+        rec["status"] = "needs_attention"
+        log(f"{key}: unknown dispute event {rec.get('event')!r} "
+            "— flagged needs_attention")
+        kv_put(key, rec)
+        return
+    _rewrite_registry(registry, records)
+    rec["status"] = "processed"
+    rec["licence_id"] = target["licence_id"]
+    kv_put(key, rec)
+    log(f"{key}: dispute {rec.get('event')} on licence "
+        f"{target['licence_id']}: {outcome} "
+        f"({'production' if live else 'test'} registry)")
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(
         description="MyKey Stripe order issuer (admin tooling — "
@@ -420,6 +540,8 @@ def main(argv=None):
             process_order(key, args.dry_run, log)
         for key in kv_list("revoke:"):
             process_revoke(key, args.dry_run, log)
+        for key in kv_list("dispute:"):
+            process_dispute(key, args.dry_run, log)
     except IssuerError as exc:
         print(f"❌ {exc}", file=sys.stderr)
         return 2

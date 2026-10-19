@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — Stripe issuer idempotency + dispute handling (release-gate F-MK-1/F-MK-2)
+- `tools/stripe_issuer.py` now dedupes by checkout session id
+  (F-MK-1): before minting, the registry is checked for a
+  record already carrying the order's session; if one exists
+  the order is marked issued with the existing licence id and
+  nothing is minted or emailed again. Together with the
+  write-once order recorder in the usemykey-site Worker, one
+  payment can no longer mint two licences via Stripe's
+  at-least-once delivery or an issuer crash mid-run.
+- The issuer now applies recorded Stripe disputes (F-MK-2):
+  `charge.dispute.created` flags the licence in the registry,
+  `charge.dispute.closed` lost revokes it with reason
+  "stripe chargeback (dispute lost)", and closed won clears
+  the flag. New tests: `tests/test_stripe_issuer.py`.
+
 ### Fixed — `_prompt_secret` is Windows-gated (packaging follow-up)
 - The piped-stdin secret path introduced with the desktop
   packaging wave is now taken **only on Windows**, the platform
