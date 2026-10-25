@@ -470,7 +470,7 @@ def _issue(authority, out_dir, **kw):
     args = argparse.Namespace(
         email=kw.get("email", "buyer@example.com"),
         payment_date=kw.get("payment_date", "2026-10-01"),
-        dob=kw.get("dob", TEST_DOB),
+        identity_ref=kw.get("identity_ref", TEST_DOB),
         max_connections=20,
         out_dir=str(out_dir), registry=None)
     assert issuer.cmd_issue(args) == 0
@@ -509,14 +509,14 @@ def test_issuer_issue_recover_and_gpg_verify(test_authority, capsys):
     # Recovery: the three inputs re-mint the IDENTICAL key.
     rc = issuer.cmd_recover(argparse.Namespace(
         email="buyer@example.com", payment_date="2026-10-01",
-        dob=TEST_DOB, registry=None))
+        identity_ref=TEST_DOB, registry=None))
     assert rc == 0
     recovered = licensing.normalize_token(capsys.readouterr().out)
     assert recovered == token
-    # Wrong DOB finds nothing.
+    # Wrong identity reference finds nothing.
     rc = issuer.cmd_recover(argparse.Namespace(
         email="buyer@example.com", payment_date="2026-10-01",
-        dob="1990-05-18", registry=None))
+        identity_ref="1990-05-18", registry=None))
     assert rc == 1
 
 
