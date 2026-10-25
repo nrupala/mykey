@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.1] \u2014 2026-10-24
+
+### Changed \u2014 licensing (supersedes v2.2.0 on licence terms)
+- Split licensing is now in force in the repository structure: pointer
+  `LICENSE`, `LICENSES/Apache-2.0.txt` (interface layer) and
+  `LICENSES/Proprietary.txt` (core, \u00a9 2351485 ALBERTA INC., all rights
+  reserved, no patent licence granted). `LICENSING.md` is the
+  controlling map. The MIT licence file is retired and the package
+  metadata no longer declares MIT.
+- Copies of v2.2.0 and earlier distributed under MIT remain governed
+  by MIT for those copies. This release and future distributions are
+  governed by the split licence.
+- Source release: no binaries are attached. The v2.2.0 binaries remain
+  available under their original terms; rebuilt binaries ship with the
+  next built release.
+
 ## [Unreleased]
 
 ### Fixed — Stripe issuer idempotency + dispute handling (release-gate F-MK-1/F-MK-2)
