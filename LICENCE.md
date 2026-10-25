@@ -83,23 +83,26 @@ confirm a key is genuine; nobody can forge one.
 
 Each licence also carries a **passcode**, printed in its signed
 statement. It is computed once, at purchase, from your email, the
-payment date, your date of birth, and a random serial number that
-only we hold. Those details let us *find* your licence again —
-they are never used to create keys, and your date of birth is
-never written into the key, the statement, or any file you
-receive. We keep a salted fingerprint of the three details in our
-licence registry so the passcode (and a lost key) can be recovered
-without storing the details themselves.
+payment date, the payment reference for the sale, and a random
+serial number that only we hold. Those details let us *find* your
+licence again — they are never used to create keys, and the
+payment reference is never written into the key, the statement,
+or any file you receive. We keep a salted fingerprint of the
+details in our licence registry so the passcode (and a lost key)
+can be recovered without storing the details themselves. We do
+not ask for, or store, your date of birth. (Two family licences
+issued in October 2026 used a date of birth in this slot, hashed
+the same way; nothing about their keys changes.)
 
 ## If you lose your licence key
 
-Email **info@aimlds.org** from the address you bought with, and
-include your **email, payment date, and date of birth**, plus your
-payment receipt if you have it. We look your licence up and
-re-send the key **only to the email address on file** — never to a
-different address, however the request arrives. (A self-serve
-recovery page is planned for the product website; until then,
-email is the way.)
+Email **info@aimlds.org** from the address you bought with and
+say you lost your key — that is all we need. We hold the purchase
+details on our side. We look your licence up, check it is active,
+and re-send the key **only to the email address on file** — never
+to a different address, however the request arrives. Control of
+that inbox is what proves the request is yours. The steps are
+also on the product website's Recover page.
 
 ## Checking a licence yourself (for the technically curious)
 

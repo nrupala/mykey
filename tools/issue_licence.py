@@ -30,24 +30,33 @@ For each licence the tool writes, into the output directory:
 and appends one record to the licence registry
 (~/workspace/corporate/licensing/registry.jsonl, mode 0600).
 
-THE PASSCODE + THE THREE INPUTS. At issuance the tool computes the
-licence's passcode = SHA-256(email ‖ payment date ‖ buyer DOB ‖
-random 128-bit serial), shown in the statement. The registry stores
-the passcode and a SALTED SHA-256 of (email ‖ DOB ‖ payment date),
-so a buyer who loses their key can be re-issued it: `recover`
-takes the same three inputs, finds the matching record by hash,
-re-mints the identical key (Ed25519 signatures are deterministic,
-and every statement field is in the registry), and prints it. The
-documented procedure sends the re-issued key ONLY to the email on
-file. The raw DOB is NEVER written anywhere — not the registry,
-not the statement, not the key: it exists only as a transient hash
-input. (The tool scans its own outputs for the DOB string before
-finishing, and fails loudly if it ever appears.)
+THE PASSCODE + THE IDENTITY REFERENCE. At issuance the tool computes
+the licence's passcode = SHA-256(email ‖ payment date ‖ identity
+reference ‖ random 128-bit serial), shown in the statement. The
+registry stores the passcode and a SALTED SHA-256 of (email ‖
+identity reference ‖ payment date), so a lost key can be re-issued:
+`recover` takes the same inputs from OUR OWN records, finds the
+matching record by hash, re-mints the identical key (Ed25519
+signatures are deterministic, and every statement field is in the
+registry), and prints it. The documented procedure sends the
+re-issued key ONLY to the email on file.
 
-Security note, also in licensing.py: the three personal inputs
-IDENTIFY a licence and authorize its reissue. They never derive
-key material. The random serial is what makes both hashes
-non-brute-forceable.
+The identity reference is the payment reference for the sale (for
+web sales, the Stripe payment-intent id — see stripe_issuer.py).
+Owner ruling 2026-10-24: dates of birth are NO LONGER COLLECTED.
+For the two family licences issued 2026-10-13 the slot holds a date
+of birth (hashed, never stored raw anywhere — not the registry, not
+the statement, not the key); `--dob` survives only as a deprecated
+alias for `--identity-ref` so old scripts keep working. Buyer-facing
+recovery is email-only: the buyer emails from the address on file
+and the key is re-sent to that address; the operator supplies the
+identity reference from the registry/payment records, never from
+the buyer. (The tool scans its own outputs for the identity
+reference string before finishing, and fails loudly if it appears.)
+
+Security note, also in licensing.py: these inputs IDENTIFY a
+licence and authorize its reissue. They never derive key material.
+The random serial is what makes both hashes non-brute-forceable.
 
 KEY HANDLING. Two derivations of the authority, cross-checked on
 every run:
@@ -314,7 +323,7 @@ def cmd_issue(args):
     email = args.email.strip().lower()
     serial = secrets.token_hex(16)  # 128-bit random serial
     passcode = licensing.compute_passcode(
-        email, args.payment_date, args.dob, serial)
+        email, args.payment_date, args.identity_ref, serial)
     salt = licensing.make_recovery_salt()
     record = {
         "licence_id": "lic-" + uuid.uuid4().hex[:16],
@@ -327,7 +336,7 @@ def cmd_issue(args):
         "max_connections": args.max_connections,
         "recovery_salt": salt,
         "recovery_hash": licensing.recovery_hash(
-            email, args.dob, args.payment_date, salt),
+            email, args.identity_ref, args.payment_date, salt),
         "status": "active",
     }
     payload = _statement_payload(record)
@@ -354,13 +363,13 @@ def cmd_issue(args):
             f"gpg detached signing failed: {sign.stderr.strip()}")
     registry = _registry_path(args.registry)
     _append_registry(registry, record)
-    # Self-check: the buyer's DOB must appear in NOTHING we wrote.
+    # Self-check: the identity reference must appear in NOTHING we wrote.
     for suffix in (".licence-key.txt", ".statement.json",
                    ".statement.json.asc"):
         with open(base + suffix, "r", encoding="utf-8") as f:
-            if args.dob in f.read():
+            if args.identity_ref in f.read():
                 raise LicenceToolError(
-                    f"FATAL: buyer DOB found in {base + suffix}")
+                    f"FATAL: identity reference found in {base + suffix}")
     print(f"licence issued: {record['licence_id']} for {email}")
     print(f"  key file:       {base}.licence-key.txt")
     print(f"  statement:      {base}.statement.json (+ .asc, "
@@ -380,7 +389,7 @@ def cmd_recover(args):
         if record.get("licensee") != email:
             continue
         candidate = licensing.recovery_hash(
-            email, args.dob, args.payment_date, record["recovery_salt"])
+            email, args.identity_ref, args.payment_date, record["recovery_salt"])
         if secrets.compare_digest(candidate, record["recovery_hash"]):
             token = licensing.make_token(
                 _statement_payload(record), private_key)
@@ -392,9 +401,9 @@ def cmd_recover(args):
             return 0
     sys.stderr.write(
         "No licence matches those details. Check the email, the "
-        "payment date, and the date of birth against the purchase "
-        "record — or ask the buyer for their payment receipt and "
-        "handle it as a manual support case.\n")
+        "payment date, and the identity reference against the "
+        "purchase record — or ask the buyer for their payment "
+        "receipt and handle it as a manual support case.\n")
     return 1
 
 
@@ -427,9 +436,14 @@ def main(argv=None):
     i.add_argument("--email", required=True, help="buyer email (licensee)")
     i.add_argument("--payment-date", required=True,
                    help="payment date, ISO (YYYY-MM-DD)")
-    i.add_argument("--dob", required=True,
-                   help="buyer date of birth, ISO — hashed into the "
-                        "passcode + registry only; never written out")
+    i.add_argument("--identity-ref", "--dob", dest="identity_ref",
+                   required=True,
+                   help="payment/identity reference for this sale "
+                        "(web sales: the Stripe payment reference) — "
+                        "hashed into the passcode + registry only; "
+                        "never written out. --dob is a deprecated "
+                        "alias; dates of birth are no longer "
+                        "collected (owner ruling 2026-10-24)")
     i.add_argument("--max-connections", type=int,
                    default=licensing.LICENSED_MAX_CONNECTIONS)
     i.add_argument("--out-dir", default=".",
@@ -439,10 +453,13 @@ def main(argv=None):
 
     r = sub.add_parser(
         "recover",
-        help="re-issue a lost key from email + payment date + DOB")
+        help="re-issue a lost key from email + payment date + "
+             "identity reference (operator-side, from our records; "
+             "buyers only ever email us)")
     r.add_argument("--email", required=True)
     r.add_argument("--payment-date", required=True)
-    r.add_argument("--dob", required=True)
+    r.add_argument("--identity-ref", "--dob", dest="identity_ref",
+                   required=True)
     r.add_argument("--registry", default=None)
     r.set_defaults(fn=cmd_recover)
 
