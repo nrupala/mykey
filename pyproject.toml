@@ -8,7 +8,7 @@ version = "2.2.0"
 description = "A zero-trust password manager. A NIST/CISA Compliant Canadian Vault"
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "MIT" }
+license = { text = "LicenseRef-Proprietary" }
 authors = [{ name = "Nrupal Akolkar" }]
 dependencies = [
     "cryptography>=42.0.0,<46",

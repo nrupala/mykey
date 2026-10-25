@@ -1,0 +1,20 @@
+# License
+
+Copyright (c) 2351485 ALBERTA INC.
+
+This repository uses split licensing. `LICENSING.md` is the controlling
+map for which components are proprietary and which components are
+licensed under the Apache License 2.0.
+
+- Proprietary core: `LICENSES/Proprietary.txt`
+- Apache 2.0 interface: `LICENSES/Apache-2.0.txt`
+- Official product terms: `LICENCE.md`
+
+Do not assume that the Apache License applies to the whole repository.
+It applies only to the interface components identified in
+`LICENSING.md`, unless a file or directory carries a different express
+licence notice.
+
+Copies already distributed under a prior licence remain governed by
+that licence for those copies. This map governs the repository and
+future distributions from the point this change is adopted.
