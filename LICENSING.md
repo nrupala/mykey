@@ -1,9 +1,13 @@
 # Licensing — Apache 2.0 + Proprietary (owner decision, 2026-10-12)
 
-This note proposes the licence map for MyKey. The full restructuring
-(pointer `LICENSE` + `LICENSES/` texts, retiring the MIT file, closing
-the superseded AGPL draft PR #2) lands in a separate licensing PR;
-this PR only aligns the per-file headers with the map below.
+This is the controlling licence map for MyKey. The per-file headers
+follow this map, and the restructuring it called for — pointer
+`LICENSE`, the `LICENSES/` texts, retirement of the MIT file, and the
+package-metadata correction — landed in the licensing-restructure PR
+of 2026-10-24. The superseded AGPL draft PR #2 is closed. Copies
+distributed under the MIT License before that change remain governed
+by MIT for those copies; this map governs the repository and future
+distributions.
 
 ## The map
 
