@@ -731,8 +731,7 @@ class MyKeyGUI:
         text.insert(tk.END, " · Built with ")
         text.insert(tk.END, "Muse by Meta", "muse-link")
         text.insert(tk.END,
-                    " — join Muse, then redeem code 101EEK in Settings "
-                    "within 48 hours of joining and we both earn tokens.\n\n"
+                    ".\n\n"
                     "Licence: the MyKey core is proprietary software of "
                     f"{brand.VENDOR_NAME}; the interface layer is "
                     "Apache 2.0. The full licence map is LICENSING.md "
