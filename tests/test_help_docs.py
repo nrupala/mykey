@@ -86,5 +86,5 @@ def test_gui_wires_help_and_about():
     gui = _read("mykey_gui.py")
     assert '"HELP.md"' in gui
     assert '"FAQ.md"' in gui
-    assert "101EEK" in gui  # the linked-attribution referral code
+    assert "101EEK" not in gui  # referral code dropped (board decision 2026-10-26)
     assert "LICENSING.md" in gui  # licence summary points at the map
