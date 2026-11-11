@@ -1,4 +1,6 @@
 🗝️ mykey: Zero-Trust Password Manager
+
+[![Licensing](https://img.shields.io/badge/licensing-split%20%28see%20LICENSING.md%29-lightgrey.svg)](LICENSING.md)
 **NIST 800-63B & CISA compliant offline vault**
 "Secure Our World" Compliant
 mykey is a stateless, local-first password generator and vault. It ensures that your master password and secrets never leave your machine. It is a Python-based, zero-knowledge password generator and manager. It utilizes Argon2id for key derivation and AES-256-GCM for authenticated local encryption.
