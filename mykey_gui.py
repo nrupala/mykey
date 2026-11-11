@@ -713,8 +713,7 @@ class MyKeyGUI:
         win, text = self._text_dialog(
             f"About {brand.PRODUCT_NAME}", width=520, height=560)
         text.tag_configure("link", foreground="#0b5cad", underline=True)
-        for label, url in (("owner-link", "https://nrupalakolkar.com"),
-                           ("muse-link", "https://muse.ai/join")):
+        for label, url in (("owner-link", "https://nrupalakolkar.com"),):
             text.tag_bind(label, "<Button-1>",
                           lambda _e, u=url: webbrowser.open(u))
             text.tag_bind(label, "<Enter>",
@@ -729,7 +728,7 @@ class MyKeyGUI:
         text.insert(tk.END, "Owned by ")
         text.insert(tk.END, "Nrupal Akolkar", "owner-link")
         text.insert(tk.END, " · Built with ")
-        text.insert(tk.END, "Muse by Meta", "muse-link")
+        text.insert(tk.END, "Muse by Meta")
         text.insert(tk.END,
                     ".\n\n"
                     "Licence: the MyKey core is proprietary software of "

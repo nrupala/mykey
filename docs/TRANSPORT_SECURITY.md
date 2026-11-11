@@ -243,9 +243,9 @@ this document is updated in the same commit.
   the URL allowlists in both test suites: the only external
   references in product code are the Apache licence text in file
   headers (desktop + mobile), and in the app UIs the
-  user-invoked attribution links (`nrupalakolkar.com`,
-  `muse.ai/join` — the mobile UI and the desktop About dialog)
-  and the support address
+  user-invoked attribution link (`nrupalakolkar.com` — the
+  mobile UI and the desktop About dialog; the Muse by Meta
+  builder credit is plain text, unlinked) and the support address
   (`info@aimlds.org`, a `mailto:` the user taps). Licence
   verification is fully offline against an embedded public key,
   and any buy/tip entry is a user-invoked browser open —
