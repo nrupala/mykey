@@ -73,9 +73,9 @@ _FORBIDDEN_PATTERNS = [
 ]
 
 # The only URLs permitted in product code: the Apache licence text
-# in file headers, and the two user-invoked attribution links of
+# in file headers, and the user-invoked attribution link of
 # docs/TRANSPORT_SECURITY.md §10 (the owner's linked-attribution
-# convention: the About dialog's owner / Muse links — opened by
+# convention: the About dialog's owner link — opened by
 # the user's own click in the system browser; the app fetches
 # nothing, ever). Brand contact points are an email address and a
 # bare domain string in brand.py — never a fetched endpoint.
@@ -84,7 +84,6 @@ _FORBIDDEN_PATTERNS = [
 _ALLOWED_URLS = {
     "http://www.apache.org/licenses/LICENSE-2.0",
     "https://nrupalakolkar.com",
-    "https://muse.ai/join",
     # Licensing wave amendment, in the same change, per this
     # gate's own rule: the brand-configured Buy / Tip destinations
     # (brand.py builds them from the bare DOMAIN constant). Like
